@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { LoginCard } from './LoginView';
+import { publicAsset } from './publicUrl';
 import './AuthScreen.css';
 
 const MS_WORD = 500;
@@ -37,12 +38,12 @@ export function AuthScreen({ onAuthed }: Props) {
       >
         <div className="auth-screen__glow" aria-hidden />
         <div className="auth-screen__mark-box">
-          <img className="auth-screen__mark" src="/ultron-mark.png" alt="" decoding="async" />
+          <img className="auth-screen__mark" src={publicAsset('ultron-mark.png')} alt="" decoding="async" />
         </div>
         <div className={`auth-screen__word-wrap${wordIn ? ' auth-screen__word-wrap--in' : ''}`}>
           <img
             className="auth-screen__word"
-            src="/ultron-wordmark.png"
+            src={publicAsset('ultron-wordmark.png')}
             alt="Ultron"
             decoding="async"
           />

@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { isValidDemoLogin, ULTRON_DEMO_EMAIL, ULTRON_DEMO_PASSWORD } from './demoCredentials';
+import { publicAsset } from './publicUrl';
 import './LoginView.css';
 
 type CardProps = {
@@ -34,12 +35,12 @@ export function LoginCard({ onAuthed, className, idPrefix = 'login' }: CardProps
       <div className="login-card__brand">
         <div className="login-card__mark-wrap">
           <div className="login-card__mark-glow" aria-hidden />
-          <img className="login-card__mark" src="/ultron-mark.png" alt="" decoding="async" />
+          <img className="login-card__mark" src={publicAsset('ultron-mark.png')} alt="" decoding="async" />
         </div>
         <div className="login-card__titles">
           <img
             className="login-card__wordmark"
-            src="/ultron-wordmark.png"
+            src={publicAsset('ultron-wordmark.png')}
             alt="Ultron"
             decoding="async"
           />

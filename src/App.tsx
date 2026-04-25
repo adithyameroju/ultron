@@ -11,6 +11,7 @@ import {
 } from './posterTypes';
 import { LightboxScaledPreview, ScaledPreview } from './ScaledPreview';
 import { pickRandomDemoPreset } from './demoPresets';
+import { publicAsset } from './publicUrl';
 import './App.css';
 
 const initialContent: PosterContent = {
@@ -209,14 +210,14 @@ function App({ onSignOut }: AppProps) {
         <div className="app-header__brand">
           <img
             className="app-header__ultron-mark"
-            src="/ultron-mark.png"
+            src={publicAsset('ultron-mark.png')}
             alt=""
             decoding="async"
           />
           <div className="app-header__titleblock">
             <img
               className="app-header__wordmark"
-              src="/ultron-wordmark.png"
+              src={publicAsset('ultron-wordmark.png')}
               alt="Ultron"
               decoding="async"
             />

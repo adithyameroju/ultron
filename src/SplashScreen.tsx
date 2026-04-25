@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useState } from 'react';
 import './SplashScreen.css';
+import { publicAsset } from './publicUrl';
 
 const HIDE_AT_MS = 2200;
 const UNMOUNT_AT_MS = 3000;
@@ -32,8 +33,8 @@ export function SplashScreen({ onComplete }: Props) {
     <div className="splash" role="presentation" aria-hidden>
       <div className={`splash__inner${enter ? ' splash__inner--in' : ''}${leaving ? ' splash__inner--out' : ''}`}>
         <div className="splash__glow" aria-hidden />
-        <img className="splash__mark" src="/ultron-mark.png" alt="" />
-        <img className="splash__word" src="/ultron-wordmark.png" alt="Ultron" />
+        <img className="splash__mark" src={publicAsset('ultron-mark.png')} alt="" />
+        <img className="splash__word" src={publicAsset('ultron-wordmark.png')} alt="Ultron" />
       </div>
     </div>
   );

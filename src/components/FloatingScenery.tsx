@@ -1,11 +1,12 @@
 import './FloatingScenery.css';
+import { publicAsset } from '../publicUrl';
 
 type Props = {
   variant: 'login' | 'app';
 };
 
-const FIGHTER = '/spaceship-fighter.png';
-const CRUISER = '/spaceship-cruiser.png';
+const FIGHTER = publicAsset('spaceship-fighter.png');
+const CRUISER = publicAsset('spaceship-cruiser.png');
 
 export function FloatingScenery({ variant }: Props) {
   return (

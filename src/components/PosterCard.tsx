@@ -10,8 +10,9 @@ import {
   typeVertical,
 } from '../posterTypography';
 import { HeroShieldVisual } from './HeroShieldVisual';
+import { publicAsset } from '../publicUrl';
 
-const LOGO_FOR_DARK_BG = '/acko-for-business-on-dark.png';
+const LOGO_FOR_DARK_BG = publicAsset('acko-for-business-on-dark.png');
 
 const PAD_PX = 80;
 /** Tighter frame on 1:1; paired with SQUARE type scale and hero band. */
