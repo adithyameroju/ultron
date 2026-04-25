@@ -1,0 +1,105 @@
+.splash {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse 80% 60% at 50% 40%, rgba(6, 8, 24, 0.9), rgba(0, 0, 0, 0.94));
+  pointer-events: none;
+}
+
+.splash__inner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  transform: scale(0.38);
+  opacity: 0;
+  filter: blur(10px);
+  transition:
+    transform 0.85s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.75s ease,
+    filter 0.9s ease;
+}
+
+.splash__inner--in {
+  transform: scale(1);
+  opacity: 1;
+  filter: blur(0);
+}
+
+.splash__inner--in.splash__inner--out {
+  opacity: 0;
+  transform: scale(1.05);
+  filter: blur(6px);
+  transition:
+    transform 0.55s ease,
+    opacity 0.5s ease,
+    filter 0.55s ease;
+}
+
+.splash__glow {
+  position: absolute;
+  width: min(90vw, 400px);
+  height: min(90vw, 400px);
+  background: radial-gradient(
+    circle,
+    rgba(0, 200, 255, 0.14) 0%,
+    rgba(120, 0, 200, 0.08) 35%,
+    transparent 65%
+  );
+  filter: blur(40px);
+  pointer-events: none;
+  animation: splashPulse 2.2s ease-in-out infinite;
+}
+
+@keyframes splashPulse {
+  0%,
+  100% {
+    opacity: 0.6;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+}
+
+.splash__mark {
+  position: relative;
+  width: 88px;
+  height: 88px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 24px rgba(0, 200, 255, 0.45));
+  z-index: 1;
+}
+
+.splash__word {
+  position: relative;
+  max-width: min(90vw, 360px);
+  height: auto;
+  max-height: 52px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 20px rgba(100, 200, 255, 0.25));
+  z-index: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .splash__inner,
+  .splash__inner--in,
+  .splash__inner--in.splash__inner--out {
+    transform: none;
+    filter: none;
+    opacity: 1;
+    transition: opacity 0.3s ease;
+  }
+  .splash__inner--in.splash__inner--out {
+    opacity: 0;
+  }
+  .splash__glow {
+    animation: none;
+  }
+}

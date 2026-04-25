@@ -1,0 +1,73 @@
+/* ACKO design system (subset) — see design skill for full reference */
+
+@font-face {
+  font-family: 'Euclid Circular B';
+  src: url('https://pub-c050457d48794d5bb9ffc2b4649de2c1.r2.dev/Euclid%20Font/EuclidCircularB-Light.otf') format('opentype');
+  font-weight: 300;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'Euclid Circular B';
+  src: url('https://pub-c050457d48794d5bb9ffc2b4649de2c1.r2.dev/Euclid%20Font/EuclidCircularB-Regular.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'Euclid Circular B';
+  src: url('https://pub-c050457d48794d5bb9ffc2b4649de2c1.r2.dev/Euclid%20Font/EuclidCircularB-Medium.otf') format('opentype');
+  font-weight: 500;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'Euclid Circular B';
+  src: url('https://pub-c050457d48794d5bb9ffc2b4649de2c1.r2.dev/Euclid%20Font/EuclidCircularB-Semibold.otf') format('opentype');
+  font-weight: 600;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'Euclid Circular B';
+  src: url('https://pub-c050457d48794d5bb9ffc2b4649de2c1.r2.dev/Euclid%20Font/EuclidCircularB-Bold.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+}
+
+:root {
+  --purple-800: #18084a;
+  --purple-700: #2e1773;
+  --purple-600: #4e29bb;
+  --purple-500: #926ff3;
+  --purple-200: #ecebff;
+  --purple-100: #f8f7fd;
+  --onyx-800: #0a0a0a;
+  --onyx-700: #121212;
+  --onyx-500: #5d5d5d;
+  --onyx-400: #b0b0b0;
+  --onyx-200: #f6f6f6;
+  --onyx-100: #ffffff;
+  --cerise-500: #ec5fab;
+  --blue-500: #1eb7e7;
+  --ease-out: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: 'Euclid Circular B', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  background: #020208;
+  color: var(--onyx-100);
+  margin: 0;
+}
+
+body.lightbox-open {
+  overflow: hidden;
+}

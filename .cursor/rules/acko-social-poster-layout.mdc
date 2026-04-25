@@ -1,0 +1,61 @@
+---
+description: Always use this layout system when generating ACKO social media poster assets or poster-generation code (export), not the shell UI.
+alwaysApply: true
+---
+
+# ACKO Social poster layout (export)
+
+This rule applies to **rendered LinkedIn art** in `PosterCard` (export PNGs). The **in-app** studio (cyberpunk grid, side panel) is separate and must not be mixed into the poster’s visual spec.
+
+## Formats and canvas sizes
+
+Use `LINKEDIN_FORMATS` in `src/posterTypes.ts` as the single source of truth:
+
+- **landscape (LinkedIn link / wide):** 1200×627px  
+- **square (feed 1:1):** 1080×1080px  
+- **vertical (4:5):** 1080×1350px  
+
+Export is captured at high resolution (see `App.tsx` `toPng` `pixelRatio`); the poster element must be this exact **logical** width × height in px.
+
+## Padding and grid
+
+- **Landscape and vertical (default):** 80px padding (scaled: `PAD_PX * t.s` in `PosterCard.tsx`)  
+- **Square 1:1:** tighter **58px** padding at design width (`PAD_PX_SQUARE`, scaled) so copy and hero fill the frame without large empty bands.  
+- **Two-column (with hero):** `LEFT_COL_FR` 60% text, `RIGHT_COL_FR` 40% one hero visual only — `HeroShieldVisual` (no extra illustrations, cards, or icon clutter).  
+- **Text-only (no hero):** copy block is centred horizontally with a max width `TEXT_ONLY_MAX_WIDTH` (~86%); type stays **left-aligned**.
+
+## 1080×1080 (square) specifics
+
+- Use `squareStack` in `posterTextBlocks`: a single **stacked** block, vertically balanced with the right-column shield.  
+- With **hero on**, the text and shield sit in a shared **vertical band** (both columns get the same height, ~90% of the content area) so the pair is **optically centred** top to bottom, not only within each full-height column.  
+- Tune **headline** scale in `SQUARE` step in `posterTypography.ts` for balance with the 40% shield.  
+- Overline/CTA/hashtags: follow Euclid / `POSTER_FONTS`; CTA has accent **bar** treatment (`ctaBlock`).
+
+## Light / dark
+
+- `CreativeTheme` **dark** or **light** controls `premiumBackground` and text colours.  
+- **Logo** asset: `public/acko-for-business-on-dark.png`; on light theme the logo is darkened for contrast.  
+- Backgrounds: premium gradient + subtle pattern; no competing with the headline.
+
+## Typography and content
+
+- **Headline** is dominant; 1–3 lines from `buildVariations` (line-break strategies + optional **all-caps** variant).  
+- For **all-caps** treatment, set `headlineAllCaps` on the variation; slightly wider tracking for legibility.  
+- Subhead, CTA, footnote, and hashtags: smaller, secondary hierarchy.  
+- JSON/API DTOs for this product use **snake_case** when exposed from Java controllers; this React app is internal to the same programme—follow repo conventions.
+
+## What not to do (export)
+
+- Do not centre the whole text block in the art **when** a two-column hero layout is in use (headline **type** is left within the text column, not the overall canvas).  
+- Do not add more than **one** main visual; do not put the main headline in the right column.  
+- Do not overcrowd; keep B2B, minimal, premium.  
+- Do not capture the **scaled** preview for download — only the full-size `PosterCard` ref.  
+
+## Variations
+
+- Four line-break / accent **channels** in `buildVariations.ts`, including an **all-caps headline** option that reuses a balanced 2-line split.  
+- Accents: crocus purple, picton, cerise (cycled).  
+
+## Fonts
+
+- `POSTER_FONTS`: **Euclid Circular B** stack from `acko-tokens` / app CSS.  
