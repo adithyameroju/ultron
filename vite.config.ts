@@ -3,7 +3,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 /** Subpath for GitHub Pages (must match the repo name). */
-const PAGES_BASE = '/enterprise-socials-studio/';
+const PAGES_BASE = '/ultron/';
 
 // GITHUB_ACTIONS is set in CI; local `npm run build` keeps base `/` for preview.
 const base = process.env.GITHUB_ACTIONS ? PAGES_BASE : '/';
