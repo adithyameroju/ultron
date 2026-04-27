@@ -31,7 +31,7 @@ type Props = {
   includeVisual?: boolean;
   /** AI-generated hero image (data URL). When set, replaces the default shield visual. */
   heroImageUrl?: string | null;
-  /** Overlay while Imagen request is in flight. */
+  /** Overlay while AI image request is in flight. */
   heroImageLoading?: boolean;
 };
 

@@ -14,9 +14,9 @@ import { pickRandomDemoPreset } from './demoPresets';
 import { publicAsset } from './publicUrl';
 import {
   buildHeroImagePrompt,
-  generateImagenHeroImage,
-  imagenAspectRatio,
-} from './imagenHero';
+  dalleSizeForFormat,
+  generateOpenAiHeroImage,
+} from './openaiHeroImage';
 import './App.css';
 
 const initialContent: PosterContent = {
@@ -53,14 +53,14 @@ function App({ onSignOut }: AppProps) {
   const [lightbox, setLightbox] = useState<number | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [isBooting, setIsBooting] = useState(false);
-  /** Imagen-generated hero (data URL), shared across variation previews for this render. */
+  /** OpenAI DALL·E hero (data URL), shared across variation previews for this render. */
   const [heroAiUrl, setHeroAiUrl] = useState<string | null>(null);
   const [heroAiLoading, setHeroAiLoading] = useState(false);
   const [heroAiError, setHeroAiError] = useState<string | null>(null);
   const exportRef = useRef<HTMLDivElement>(null);
   const bootTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const geminiApiKey = import.meta.env.VITE_GEMINI_API_KEY ?? '';
+  const openAiApiKey = import.meta.env.VITE_OPENAI_API_KEY ?? '';
 
   const generate = useCallback(() => {
     const next: GeneratedBundle = {
@@ -137,11 +137,11 @@ function App({ onSignOut }: AppProps) {
     setHeroAiError(null);
     setHeroAiLoading(true);
     const prompt = buildHeroImagePrompt(generated.content, v, generated.theme);
-    const aspectRatio = imagenAspectRatio(generated.format);
-    const result = await generateImagenHeroImage({
+    const size = dalleSizeForFormat(generated.format);
+    const result = await generateOpenAiHeroImage({
       prompt,
-      aspectRatio,
-      apiKey: geminiApiKey,
+      size,
+      apiKey: openAiApiKey,
     });
     setHeroAiLoading(false);
     if (result.ok) {
@@ -149,7 +149,7 @@ function App({ onSignOut }: AppProps) {
     } else {
       setHeroAiError(result.message);
     }
-  }, [generated, v, includeVisual, geminiApiKey]);
+  }, [generated, v, includeVisual, openAiApiKey]);
 
   const caption = useMemo(() => buildLinkedInCaption(draft), [draft]);
   const generatedFmt = generated ? LINKEDIN_FORMATS[generated.format] : null;
@@ -328,7 +328,7 @@ function App({ onSignOut }: AppProps) {
             </div>
 
             <div className="field field--spaced field--compact">
-              <span className="field-label">AI hero (Imagen 4)</span>
+              <span className="field-label">AI hero (OpenAI DALL·E 3)</span>
               <div className="row-2" style={{ marginTop: 6 }}>
                 <button
                   type="button"
@@ -352,10 +352,13 @@ function App({ onSignOut }: AppProps) {
                   </button>
                 ) : null}
               </div>
-              {!geminiApiKey ? (
-                <small>Add <code>VITE_GEMINI_API_KEY</code> to <code>.env.local</code> (Google AI Studio).</small>
+              {!openAiApiKey ? (
+                <small>
+                  Add <code>VITE_OPENAI_API_KEY</code> to <code>.env.local</code>, then restart{' '}
+                  <code>npm run dev</code>.
+                </small>
               ) : (
-                <small>Uses your copy + selected variation accent. SynthID watermark may appear on exports.</small>
+                <small>Uses your copy + selected variation accent. Subject to OpenAI usage and content policies.</small>
               )}
               {heroAiError ? (
                 <p className="login-form__err" style={{ marginTop: 8 }}>
