@@ -12,6 +12,11 @@ import {
 import { LightboxScaledPreview, ScaledPreview } from './ScaledPreview';
 import { pickRandomDemoPreset } from './demoPresets';
 import { publicAsset } from './publicUrl';
+import {
+  buildHeroImagePrompt,
+  generateImagenHeroImage,
+  imagenAspectRatio,
+} from './imagenHero';
 import './App.css';
 
 const initialContent: PosterContent = {
@@ -48,8 +53,14 @@ function App({ onSignOut }: AppProps) {
   const [lightbox, setLightbox] = useState<number | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [isBooting, setIsBooting] = useState(false);
+  /** Imagen-generated hero (data URL), shared across variation previews for this render. */
+  const [heroAiUrl, setHeroAiUrl] = useState<string | null>(null);
+  const [heroAiLoading, setHeroAiLoading] = useState(false);
+  const [heroAiError, setHeroAiError] = useState<string | null>(null);
   const exportRef = useRef<HTMLDivElement>(null);
   const bootTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const geminiApiKey = import.meta.env.VITE_GEMINI_API_KEY ?? '';
 
   const generate = useCallback(() => {
     const next: GeneratedBundle = {
@@ -62,6 +73,8 @@ function App({ onSignOut }: AppProps) {
     if (noMotion) {
       setGenerated(next);
       setSelected(0);
+      setHeroAiUrl(null);
+      setHeroAiError(null);
       return;
     }
     if (bootTimeoutRef.current) {
@@ -73,6 +86,8 @@ function App({ onSignOut }: AppProps) {
       setSelected(0);
       setIsBooting(false);
       bootTimeoutRef.current = null;
+      setHeroAiUrl(null);
+      setHeroAiError(null);
     }, 2600);
   }, [draft, format, theme, includeVisual]);
 
@@ -85,6 +100,9 @@ function App({ onSignOut }: AppProps) {
     setGenerated(null);
     setSelected(0);
     setLightbox(null);
+    setHeroAiUrl(null);
+    setHeroAiError(null);
+    setHeroAiLoading(false);
     setDraft({ ...initialContent });
   }, []);
 
@@ -111,6 +129,28 @@ function App({ onSignOut }: AppProps) {
   }, [variations.length]);
 
   const v = variations[selected] ?? variations[0];
+
+  const generateAiHero = useCallback(async () => {
+    if (!generated || !v || !includeVisual) {
+      return;
+    }
+    setHeroAiError(null);
+    setHeroAiLoading(true);
+    const prompt = buildHeroImagePrompt(generated.content, v, generated.theme);
+    const aspectRatio = imagenAspectRatio(generated.format);
+    const result = await generateImagenHeroImage({
+      prompt,
+      aspectRatio,
+      apiKey: geminiApiKey,
+    });
+    setHeroAiLoading(false);
+    if (result.ok) {
+      setHeroAiUrl(result.dataUrl);
+    } else {
+      setHeroAiError(result.message);
+    }
+  }, [generated, v, includeVisual, geminiApiKey]);
+
   const caption = useMemo(() => buildLinkedInCaption(draft), [draft]);
   const generatedFmt = generated ? LINKEDIN_FORMATS[generated.format] : null;
 
@@ -285,6 +325,43 @@ function App({ onSignOut }: AppProps) {
                 <span>Include hero visual (shield)</span>
               </label>
               <small>Off: text-only, centred block.</small>
+            </div>
+
+            <div className="field field--spaced field--compact">
+              <span className="field-label">AI hero (Imagen 4)</span>
+              <div className="row-2" style={{ marginTop: 6 }}>
+                <button
+                  type="button"
+                  className="btn btn-cyber-ghost btn--compact"
+                  onClick={generateAiHero}
+                  disabled={!g || !v || !includeVisual || heroAiLoading || isBooting}
+                >
+                  {heroAiLoading ? 'Generating…' : 'Generate AI visual'}
+                </button>
+                {heroAiUrl ? (
+                  <button
+                    type="button"
+                    className="btn btn-cyber-ghost btn--compact"
+                    onClick={() => {
+                      setHeroAiUrl(null);
+                      setHeroAiError(null);
+                    }}
+                    disabled={heroAiLoading}
+                  >
+                    Clear AI visual
+                  </button>
+                ) : null}
+              </div>
+              {!geminiApiKey ? (
+                <small>Add <code>VITE_GEMINI_API_KEY</code> to <code>.env.local</code> (Google AI Studio).</small>
+              ) : (
+                <small>Uses your copy + selected variation accent. SynthID watermark may appear on exports.</small>
+              )}
+              {heroAiError ? (
+                <p className="login-form__err" style={{ marginTop: 8 }}>
+                  {heroAiError}
+                </p>
+              ) : null}
             </div>
           </section>
 
@@ -520,6 +597,8 @@ function App({ onSignOut }: AppProps) {
                           content={posterContent}
                           variation={variation}
                           includeVisual={g.includeVisual}
+                          heroImageUrl={heroAiUrl}
+                          heroImageLoading={heroAiLoading}
                         />
                       </ScaledPreview>
                     </button>
@@ -605,6 +684,8 @@ function App({ onSignOut }: AppProps) {
                     content={g.content}
                     variation={variations[lightbox]!}
                     includeVisual={g.includeVisual}
+                    heroImageUrl={heroAiUrl}
+                    heroImageLoading={heroAiLoading}
                   />
                 </LightboxScaledPreview>
               </div>
@@ -647,6 +728,8 @@ function App({ onSignOut }: AppProps) {
             content={g.content}
             variation={v}
             includeVisual={g.includeVisual}
+            heroImageUrl={heroAiUrl}
+            heroImageLoading={false}
           />
         ) : null}
       </div>

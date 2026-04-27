@@ -29,6 +29,10 @@ type Props = {
   variation: Variation;
   /** When false, hero shield is hidden and the text block sits left-to-centre (not edge-pinned). */
   includeVisual?: boolean;
+  /** AI-generated hero image (data URL). When set, replaces the default shield visual. */
+  heroImageUrl?: string | null;
+  /** Overlay while Imagen request is in flight. */
+  heroImageLoading?: boolean;
 };
 
 /** When no hero visual: text block width as fraction of content area, centred (copy stays left-aligned). */
@@ -49,6 +53,66 @@ const logoStyle = (theme: CreativeTheme, h: number): CSSProperties => ({
   objectFit: 'contain',
   filter: theme === 'light' ? 'brightness(0)' : undefined,
 });
+
+function HeroSlot({
+  accent,
+  theme,
+  heroImageUrl,
+  heroImageLoading,
+}: {
+  accent: string;
+  theme: CreativeTheme;
+  heroImageUrl?: string | null;
+  heroImageLoading?: boolean;
+}) {
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        inset: 0,
+        borderRadius: 10,
+        overflow: 'hidden',
+      }}
+    >
+      {heroImageUrl ? (
+        <img
+          src={heroImageUrl}
+          alt=""
+          style={{
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+            objectPosition: 'center',
+            display: 'block',
+          }}
+        />
+      ) : (
+        <HeroShieldVisual accent={accent} theme={theme} />
+      )}
+      {heroImageLoading ? (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'rgba(4, 8, 22, 0.55)',
+            backdropFilter: 'blur(4px)',
+            WebkitBackdropFilter: 'blur(4px)',
+            fontFamily: POSTER_FONTS.family,
+            fontSize: 12,
+            letterSpacing: '0.14em',
+            color: 'rgba(0, 255, 240, 0.92)',
+          }}
+          aria-busy
+        >
+          Generating visual…
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 function ctaTextColor(theme: CreativeTheme): string {
   if (theme === 'light') {
@@ -349,7 +413,9 @@ function landscapeLayout(
   content: PosterContent,
   variation: Variation,
   theme: CreativeTheme,
-  includeVisual: boolean
+  includeVisual: boolean,
+  heroImageUrl?: string | null,
+  heroImageLoading?: boolean
 ) {
   const t = typeLandscape(w);
   const pad = PAD_PX * t.s;
@@ -459,7 +525,12 @@ function landscapeLayout(
               flexShrink: 0,
             }}
           >
-            <HeroShieldVisual accent={accent} theme={theme} />
+            <HeroSlot
+              accent={accent}
+              theme={theme}
+              heroImageUrl={heroImageUrl}
+              heroImageLoading={heroImageLoading}
+            />
           </div>
         </div>
       ) : (
@@ -504,7 +575,9 @@ function squareOrVertical(
   content: PosterContent,
   variation: Variation,
   theme: CreativeTheme,
-  includeVisual: boolean
+  includeVisual: boolean,
+  heroImageUrl?: string | null,
+  heroImageLoading?: boolean
 ) {
   const t = format === 'vertical' ? typeVertical(w) : typeSquare(w);
   const pad = (format === 'square' ? PAD_PX_SQUARE : PAD_PX) * t.s;
@@ -636,7 +709,12 @@ function squareOrVertical(
               minHeight: 0,
             }}
           >
-            <HeroShieldVisual accent={accent} theme={theme} />
+            <HeroSlot
+              accent={accent}
+              theme={theme}
+              heroImageUrl={heroImageUrl}
+              heroImageLoading={heroImageLoading}
+            />
           </div>
         </div>
       ) : (
@@ -689,20 +767,47 @@ function squareOrVertical(
 }
 
 export const PosterCard = forwardRef<HTMLDivElement, Props>(function PosterCard(
-  { format, theme, content, variation, includeVisual = true },
+  {
+    format,
+    theme,
+    content,
+    variation,
+    includeVisual = true,
+    heroImageUrl = null,
+    heroImageLoading = false,
+  },
   ref
 ) {
   const { width, height } = LINKEDIN_FORMATS[format];
   if (format === 'landscape') {
     return (
       <div ref={ref} style={{ width, height, lineHeight: 1 }}>
-        {landscapeLayout(width, height, content, variation, theme, includeVisual)}
+        {landscapeLayout(
+          width,
+          height,
+          content,
+          variation,
+          theme,
+          includeVisual,
+          heroImageUrl,
+          heroImageLoading
+        )}
       </div>
     );
   }
   return (
     <div ref={ref} style={{ width, height, lineHeight: 1 }}>
-      {squareOrVertical(format, width, height, content, variation, theme, includeVisual)}
+      {squareOrVertical(
+        format,
+        width,
+        height,
+        content,
+        variation,
+        theme,
+        includeVisual,
+        heroImageUrl,
+        heroImageLoading
+      )}
     </div>
   );
 });
