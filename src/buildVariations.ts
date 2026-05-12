@@ -1,7 +1,7 @@
-import type { AccentId, PosterContent, Variation } from './posterTypes';
+import type { AccentId, HeadlineTreatment, PosterContent, PosterCopyRoute, Variation } from './posterTypes';
 import { ACCENTS } from './posterTypes';
 
-const MAX_HEADLINE_LINES = 3;
+const MAX_HEADLINE_LINES = 4;
 
 function wordsOf(headline: string): string[] {
   return headline.trim().split(/\s+/).filter(Boolean);
@@ -48,6 +48,48 @@ function capLines(lines: string[], max: number): string[] {
   return [...head, tail];
 }
 
+function firstSentence(text: string): string {
+  const t = text.trim();
+  const dot = t.indexOf('.');
+  if (dot === -1) {
+    return t;
+  }
+  return t.slice(0, dot + 1).trim();
+}
+
+function variationCopy(
+  content: PosterContent,
+  index: number
+): { displayOverline: string; displaySubhead: string; headlineTreatment: HeadlineTreatment } {
+  const baseOv = content.overline.trim() || 'Enterprise';
+  const sub = content.subhead.trim();
+  const first = firstSentence(sub);
+  const treatments: HeadlineTreatment[] = [
+    'none',
+    'accentFirstLine',
+    'accentLastWordFirstLine',
+    'underlineSecondLine',
+  ];
+  const overlines = [
+    baseOv,
+    `${baseOv} · spotlight`,
+    'Commercial lens',
+    'Leadership decks',
+  ];
+  /** Distinct subhead phrasing per poster option (length controlled at generation time). */
+  const subheads = [
+    sub,
+    sub ? `One thread: ${first}` : sub,
+    sub ? `Now: ${first}` : sub,
+    sub ? `${first}` : sub,
+  ];
+  return {
+    displayOverline: overlines[index % overlines.length]!,
+    displaySubhead: subheads[index % subheads.length]!,
+    headlineTreatment: treatments[index % treatments.length]!,
+  };
+}
+
 export function buildVariations(content: PosterContent): Variation[] {
   const words = wordsOf(content.headline);
   const balanced2 = capLines(splitTwoLines(words, 0.5), MAX_HEADLINE_LINES);
@@ -75,15 +117,117 @@ export function buildVariations(content: PosterContent): Variation[] {
     },
   ];
 
-  const accentOrder: AccentId[] = ['purple', 'picton', 'cerise', 'picton'];
+  /** One distinct ACKO accent per variation (no repeats in the default set of four). */
+  const accentOrder: AccentId[] = ['purple', 'cerise', 'picton', 'violet'];
+  const creativeNames = ['Bold', 'Minimal', 'Visual-heavy', 'Statement'] as const;
   return modes.map((m, i) => {
     const accent = accentOrder[i % accentOrder.length] ?? 'purple';
+    const copy = variationCopy(content, i);
     return {
       id: `v${i + 1}-${accent}`,
       label: `${ACCENTS[accent].label} · ${m.label}`,
+      creativeName: creativeNames[i] ?? creativeNames[0],
       accent,
+      backgroundStyleId: i % 8,
       headlineLines: m.lines,
       headlineAllCaps: m.headlineAllCaps,
+      displayOverline: copy.displayOverline,
+      displaySubhead: copy.displaySubhead,
+      headlineTreatment: copy.headlineTreatment,
     };
   });
+}
+
+/** First workspace strip (non-carousel): emphasise copy / headline routes; unified accent + background. */
+const STRIP_ACCENT: AccentId = 'purple';
+
+/**
+ * Four headline + subhead pairs for the poster-options row: prefers model `copyRoutes`, else pads partial
+ * routes, else derives visibly different strings from the primary headline and subhead.
+ */
+export function expandToFourCopyRoutes(content: PosterContent): PosterCopyRoute[] {
+  const norm = (r: PosterCopyRoute): PosterCopyRoute => ({
+    headline: r.headline.replace(/\s+/g, ' ').trim(),
+    subhead: r.subhead.replace(/\s+/g, ' ').trim(),
+  });
+
+  const fromModel = (content.copyRoutes ?? []).filter((r) => r.headline.trim()).map(norm);
+  if (fromModel.length >= 4) {
+    return fromModel.slice(0, 4);
+  }
+  if (fromModel.length > 0) {
+    const padded = [...fromModel];
+    while (padded.length < 4) {
+      padded.push({ ...padded[padded.length - 1]! });
+    }
+    return padded.slice(0, 4);
+  }
+
+  const h = content.headline.replace(/\s+/g, ' ').trim();
+  const s = content.subhead.replace(/\s+/g, ' ').trim();
+  const words = wordsOf(h);
+  const mid = Math.max(1, Math.ceil(words.length / 2));
+  const headA = words.slice(0, mid).join(' ');
+  const headB = words.slice(mid).join(' ');
+  const commaParts = h.split(/\s*,\s*/).map((p) => p.trim()).filter(Boolean);
+  const vc = [0, 1, 2, 3].map((i) => variationCopy(content, i));
+
+  const headlines: string[] = [
+    h,
+    headB ? `${headB} — ${headA}` : headA || h,
+    commaParts.length > 1 ? commaParts[1]! : headA || h,
+    words.length > 3
+      ? `${words.slice(-3).join(' ')}, ${words.slice(0, -3).join(' ')}`.trim()
+      : words.length > 1
+        ? `${words[words.length - 1]!}: ${words.slice(0, -1).join(' ')}`
+        : h,
+  ];
+
+  return headlines.map((headline, i) => ({
+    headline: headline || h,
+    subhead: (vc[i]?.displaySubhead ?? s) || s,
+  }));
+}
+
+export function buildCopyVisualStrip(content: PosterContent): Variation[] {
+  const routes = expandToFourCopyRoutes(content);
+  return routes.map((route, i) => {
+    const slice: PosterContent = {
+      ...content,
+      headline: route.headline,
+      subhead: route.subhead,
+      copyRoutes: undefined,
+    };
+    const v = buildVariations(slice)[i]!;
+    return {
+      ...v,
+      accent: STRIP_ACCENT,
+      backgroundStyleId: 0,
+      id: `copy-strip-${i}-${v.id}`,
+    };
+  });
+}
+
+/** Second strip: same copy as `base`, four accent + premium background recipes. */
+export function buildLayoutAccentStrip(base: Variation): Variation[] {
+  const accentOrder: AccentId[] = ['purple', 'cerise', 'picton', 'violet'];
+  return accentOrder.map((accent, i) => ({
+    ...base,
+    accent,
+    backgroundStyleId: i % 8,
+    id: `layout-strip-${i}-${accent}`,
+    label: `${ACCENTS[accent].label} · canvas ${(i % 8) + 1}`,
+    creativeName: ACCENTS[accent].label.split(' ')[0] ?? ACCENTS[accent].label,
+  }));
+}
+
+/** Single poster variation for export / preview: copy route × layout accent. */
+export function mergeCopyAndLayoutVariation(copyV: Variation, layoutV: Variation): Variation {
+  return {
+    ...copyV,
+    accent: layoutV.accent,
+    backgroundStyleId: layoutV.backgroundStyleId,
+    id: `${copyV.id}__${layoutV.id}`,
+    label: `${copyV.creativeName ?? 'Creative'} · ${ACCENTS[layoutV.accent].label}`,
+  };
 }

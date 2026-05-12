@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { UltronUser } from './authSession';
 import { LoginCard } from './LoginView';
 import { publicAsset } from './publicUrl';
 import './AuthScreen.css';
@@ -7,7 +8,7 @@ const MS_WORD = 500;
 const MS_FORM = 1600;
 
 type Props = {
-  onAuthed: () => void;
+  onAuthed: (user: UltronUser) => void;
 };
 
 export function AuthScreen({ onAuthed }: Props) {

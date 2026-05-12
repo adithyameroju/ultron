@@ -34,14 +34,15 @@ Export is captured at high resolution (see `App.tsx` `toPng` `pixelRatio`); the 
 ## Light / dark
 
 - `CreativeTheme` **dark** or **light** controls `premiumBackground` and text colours.  
-- **Logo** asset: `public/acko-for-business-on-dark.png`; on light theme the logo is darkened for contrast.  
+- **Logo** assets: `public/acko-for-business-on-dark.png` (dark creatives); `public/acko-for-business-on-light.jpg` (light creatives—full-colour wordmark on pale backgrounds).  
 - Backgrounds: premium gradient + subtle pattern; no competing with the headline.
 
 ## Typography and content
 
-- **Headline** is dominant; 1–3 lines from `buildVariations` (line-break strategies + optional **all-caps** variant).  
-- For **all-caps** treatment, set `headlineAllCaps` on the variation; slightly wider tracking for legibility.  
-- Subhead, CTA, footnote, and hashtags: smaller, secondary hierarchy.  
+- **Headline** is dominant; **exactly four** wrapped lines at export headline size (line-break strategies from `buildVariations` + optional **all-caps** variant). **Do not** rely on CSS truncation or ellipsis—copy length must fit naturally in four lines.
+- **Subhead** is **exactly two** lines at export subhead size—**no** third line, **no** multi-paragraph block (poster subtext is never “dozens of lines”), and **no** truncation/clamping as a substitute for editing copy.
+- For **all-caps** treatment, set `headlineAllCaps` on the variation; slightly wider tracking for legibility.
+- CTA, footnote, and hashtags: smaller, secondary hierarchy.  
 - JSON/API DTOs for this product use **snake_case** when exposed from Java controllers; this React app is internal to the same programme—follow repo conventions.
 
 ## What not to do (export)
@@ -50,6 +51,7 @@ Export is captured at high resolution (see `App.tsx` `toPng` `pixelRatio`); the 
 - Do not add more than **one** main visual; do not put the main headline in the right column.  
 - Do not overcrowd; keep B2B, minimal, premium.  
 - Do not capture the **scaled** preview for download — only the full-size `PosterCard` ref.  
+- Do not use **line-clamp, ellipsis, or cropping** on headline or subhead to “fix” overlong copy—generate and edit copy so it fits **four headline lines** and **two subhead lines** without clipping.  
 
 ## Variations
 

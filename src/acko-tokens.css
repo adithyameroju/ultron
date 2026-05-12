@@ -53,19 +53,31 @@
   box-sizing: border-box;
 }
 
-html,
-body,
-#root {
+html {
   height: 100%;
   margin: 0;
 }
 
+/* Flex column so the app shell can fill the viewport without document scroll */
 body {
+  height: 100%;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
   font-family: 'Euclid Circular B', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   background: #020208;
   color: var(--onyx-100);
-  margin: 0;
+}
+
+#root {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 body.lightbox-open {

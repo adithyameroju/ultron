@@ -56,3 +56,19 @@ export function pickRandomDemoPreset(): PosterContent {
   const i = Math.floor(Math.random() * ENTERPRISE_DEMO_PRESETS.length);
   return { ...ENTERPRISE_DEMO_PRESETS[i]! };
 }
+
+/** Campaign-style brief for the V2 prompt field, aligned with the same demo preset as poster copy. */
+export function buildV2CampaignPromptFromPreset(p: PosterContent): string {
+  const lines = [
+    `Campaign angle: ${p.headline.trim()}`,
+    '',
+    `Supporting story: ${p.subhead.trim()}`,
+    '',
+    `Primary CTA direction: ${p.cta.trim()}`,
+  ];
+  if (p.hashtags.trim()) {
+    lines.push('', `Themes / hashtags: ${p.hashtags.trim()}`);
+  }
+  lines.push('', `Brand line: ${p.overline.trim()}. Tone: B2B, clear, credible—suitable for LinkedIn enterprise audiences.`);
+  return lines.join('\n');
+}

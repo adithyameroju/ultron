@@ -3,21 +3,24 @@ import App from './App';
 import { AuthScreen } from './AuthScreen';
 import { StarfieldBackground } from './components/StarfieldBackground';
 import { FloatingScenery } from './components/FloatingScenery';
-import { clearSession, isSessionValid, setSession } from './authSession';
+import type { UltronUser } from './authSession';
+import { clearSession, getSessionUser, isSessionValid, setSession } from './authSession';
 import './AppRoot.css';
 
 export function AppRoot() {
-  const [authed, setAuthed] = useState(() => isSessionValid());
+  const [user, setUser] = useState<UltronUser | null>(() => (isSessionValid() ? getSessionUser() : null));
 
-  const onAuthed = useCallback(() => {
-    setSession();
-    setAuthed(true);
+  const onAuthed = useCallback((next: UltronUser) => {
+    setSession(next);
+    setUser(next);
   }, []);
 
   const onSignOut = useCallback(() => {
     clearSession();
-    setAuthed(false);
+    setUser(null);
   }, []);
+
+  const authed = user !== null;
 
   return (
     <>
@@ -26,7 +29,7 @@ export function AppRoot() {
       {authed ? <FloatingScenery variant="app" /> : null}
       {!authed ? <FloatingScenery variant="login" /> : null}
       <div className="cyber-app__content">
-        {authed ? <App onSignOut={onSignOut} /> : <AuthScreen onAuthed={onAuthed} />}
+        {user ? <App user={user} onSignOut={onSignOut} /> : <AuthScreen onAuthed={onAuthed} />}
       </div>
     </>
   );

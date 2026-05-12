@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { LINKEDIN_FORMATS, type LinkedInFormatId } from './posterTypes';
+import { LINKEDIN_FORMATS, type CreativeTheme, type LinkedInFormatId } from './posterTypes';
 
 const DEFAULT_MAX_W = 280;
 
@@ -9,6 +9,8 @@ type Props = {
   /** Max width in CSS px for the outer preview box; scales the poster to fit. */
   maxWidth?: number;
   className?: string;
+  /** Match letterboxing to poster canvas (avoids grey bands around previews). */
+  posterTheme?: CreativeTheme;
 };
 
 export function ScaledPreview({
@@ -16,6 +18,7 @@ export function ScaledPreview({
   children,
   maxWidth = DEFAULT_MAX_W,
   className = '',
+  posterTheme = 'dark',
 }: Props) {
   const outerRef = useRef<HTMLDivElement>(null);
   const [s, setS] = useState(0.2);
@@ -43,16 +46,22 @@ export function ScaledPreview({
   const { width, height } = LINKEDIN_FORMATS[format];
   const scale = s || 0.2;
   const ratioClass =
-    format === 'landscape' ? '' : format === 'square' ? 'ratio-1-1' : 'ratio-4-5';
+    format === 'landscape' ? '' : format === 'square' || format === 'carousel' ? 'ratio-1-1' : 'ratio-4-5';
 
-  const cap =
-    format === 'landscape' ? maxWidth : Math.min(maxWidth, Math.round(maxWidth * 1.15));
+  /** Square/carousel use the same cap as landscape so previews never outgrow width-bounded layouts. */
+  const cap = maxWidth;
+
+  const tone = posterTheme === 'light' ? 'light' : 'dark';
 
   return (
     <div
       ref={outerRef}
-      className={`scaled-outer ${ratioClass} ${className}`.trim()}
-      style={{ maxWidth: cap, width: '100%' }}
+      className={`scaled-outer scaled-outer--poster-${tone} ${ratioClass} ${className}`.trim()}
+      style={{
+        maxWidth: cap,
+        width: '100%',
+        aspectRatio: `${width} / ${height}`,
+      }}
     >
       <div
         className="scaled-inner"
@@ -75,13 +84,19 @@ type LightboxScaledProps = {
   children: ReactNode;
   /** Class on the measurement box (should fill the gallery canvas; use lightbox-fit from App.css). */
   className?: string;
+  posterTheme?: CreativeTheme;
 };
 
 /**
  * Scales a poster to fit the lightbox: uses both width and height of the
  * parent so tall formats (e.g. 1080×1080) do not require scrolling.
  */
-export function LightboxScaledPreview({ format, children, className = '' }: LightboxScaledProps) {
+export function LightboxScaledPreview({
+  format,
+  children,
+  className = '',
+  posterTheme = 'dark',
+}: LightboxScaledProps) {
   const fitRef = useRef<HTMLDivElement>(null);
   const [maxWidth, setMaxWidth] = useState(LIGHTBOX_CAP);
 
@@ -109,7 +124,7 @@ export function LightboxScaledPreview({ format, children, className = '' }: Ligh
 
   return (
     <div ref={fitRef} className={className.trim()}>
-      <ScaledPreview format={format} maxWidth={maxWidth} className="lightbox-scaled">
+      <ScaledPreview format={format} maxWidth={maxWidth} className="lightbox-scaled" posterTheme={posterTheme}>
         {children}
       </ScaledPreview>
     </div>
