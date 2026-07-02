@@ -1,4 +1,4 @@
-import { Fragment, forwardRef, type CSSProperties, type ReactNode } from 'react';
+import { forwardRef, type CSSProperties, type ReactNode } from 'react';
 import type {
   CreativeTheme,
   HeadlineTreatment,
@@ -8,19 +8,22 @@ import type {
 } from '../posterTypes';
 import { ACCENTS, LINKEDIN_FORMATS } from '../posterTypes';
 import { hexWithAlpha } from '../posterColorUtils';
+import { fitHeadlineLinesForPoster, type PosterHeadlineLayout } from '../headlineLineFit';
 import {
   POSTER_FONTS,
   type PosterTypeSizes,
   typeSquare,
   typeLandscape,
   typeVertical,
+  typeCarousel,
 } from '../posterTypography';
+import { normalizePosterCta } from '../posterCopyClamp';
 import { HeroShieldVisual } from './HeroShieldVisual';
 import { publicAsset } from '../publicUrl';
 
+/** Poster logos — strict spec: `.cursor/rules/acko-poster-logo-strict.mdc` (do not change paths or logoStyle without user approval). */
 const LOGO_FOR_DARK_BG = publicAsset('acko-for-business-on-dark.png');
-/** Full-colour wordmark for light poster backgrounds (high contrast on white / pale gradients). */
-const LOGO_FOR_LIGHT_BG = publicAsset('acko-for-business-on-light.jpg');
+const LOGO_FOR_LIGHT_BG = publicAsset('acko-for-business-light-creative.png');
 
 const PAD_PX = 80;
 /** Tighter frame on 1:1; paired with SQUARE type scale and hero band. */
@@ -67,10 +70,14 @@ function formatHashtagsForPoster(raw: string): string {
     .join('  ');
 }
 
-const logoStyle = (h: number): CSSProperties => ({
+const logoStyle = (h: number, theme: CreativeTheme): CSSProperties => ({
   height: `${h}px`,
   width: 'auto',
   objectFit: 'contain',
+  display: 'block',
+  /** Light mark is RGBA PNG only — no baked backdrop; subtle lift on pale gradients. */
+  filter:
+    theme === 'light' ? 'drop-shadow(0 1px 2px rgba(46, 23, 115, 0.14))' : undefined,
 });
 
 function heroSlotMergedBackdrop(theme: CreativeTheme, accent: string): string {
@@ -86,6 +93,11 @@ function heroSlotMergedBackdrop(theme: CreativeTheme, accent: string): string {
   ].join(', ');
 }
 
+const headlineRowStyle: CSSProperties = {
+  display: 'block',
+  whiteSpace: 'nowrap',
+};
+
 function headlineLineNodes(
   lines: string[],
   treatment: HeadlineTreatment,
@@ -94,43 +106,39 @@ function headlineLineNodes(
 ): ReactNode {
   if (treatment === 'none') {
     return lines.map((line, i) => (
-      <Fragment key={i}>
-        {i > 0 ? <br /> : null}
+      <span key={i} style={headlineRowStyle}>
         {line}
-      </Fragment>
+      </span>
     ));
   }
   if (treatment === 'accentFirstLine') {
     return lines.map((line, i) => (
-      <Fragment key={i}>
-        {i > 0 ? <br /> : null}
-        <span style={{ color: i === 0 ? accent : headlineColor }}>{line}</span>
-      </Fragment>
+      <span key={i} style={{ ...headlineRowStyle, color: i === 0 ? accent : headlineColor }}>
+        {line}
+      </span>
     ));
   }
   if (treatment === 'accentLastWordFirstLine') {
     return lines.map((line, i) => (
-      <Fragment key={i}>
-        {i > 0 ? <br /> : null}
+      <span key={i} style={headlineRowStyle}>
         {i === 0 ? lastWordAccentFragment(line, accent, headlineColor) : line}
-      </Fragment>
+      </span>
     ));
   }
   return lines.map((line, i) => (
-    <Fragment key={i}>
-      {i > 0 ? <br /> : null}
-      <span
-        style={{
-          color: headlineColor,
-          textDecoration: i === 1 ? 'underline' : undefined,
-          textDecorationColor: i === 1 ? accent : undefined,
-          textDecorationThickness: i === 1 ? '0.09em' : undefined,
-          textUnderlineOffset: i === 1 ? '0.14em' : undefined,
-        }}
-      >
-        {line}
-      </span>
-    </Fragment>
+    <span
+      key={i}
+      style={{
+        ...headlineRowStyle,
+        color: headlineColor,
+        textDecoration: i === 1 ? 'underline' : undefined,
+        textDecorationColor: i === 1 ? accent : undefined,
+        textDecorationThickness: i === 1 ? '0.09em' : undefined,
+        textUnderlineOffset: i === 1 ? '0.14em' : undefined,
+      }}
+    >
+      {line}
+    </span>
   ));
 }
 
@@ -418,9 +426,9 @@ function posterTextBlocks(
     overlineLetterSpacing: string;
     centerPaddingY: number;
     subheadMarginTop: number;
-    /** When set, clamps subhead lines; omit for carousel so full copy can wrap. */
+    /** When set, clamps subhead lines (legacy; prefer omit so full copy shows). */
     subheadLineClamp?: number;
-    /** Hard cap on wrapped headline rows (logical `<br />` lines can still wrap without this). */
+    /** Hard cap on wrapped headline rows (legacy; prefer omit so full copy shows). */
     headlineLineClamp?: number;
     footnoteBlockPaddingTop: number;
     footnoteGap: number;
@@ -430,6 +438,9 @@ function posterTextBlocks(
     layout?: 'default' | 'squareStack';
     /** Gap between stacked items in squareStack (px at scale). */
     stackGap?: number;
+    /** CTA container: rounded chip vs square tile (static 1:1 only uses square). */
+    ctaShape?: 'pill' | 'square';
+    headlineLayout: PosterHeadlineLayout;
   }
 ): ReactNode {
   const {
@@ -443,12 +454,17 @@ function posterTextBlocks(
     headlineColor,
     layout = 'default',
     stackGap: stackGapOpt,
+    ctaShape = 'pill',
+    headlineLayout,
   } = options;
   const textMuted = theme === 'dark' ? 'rgba(210, 200, 255, 0.78)' : '#5D5D5D';
   const gap = stackGapOpt ?? 11 * t.s;
   const overlineText = variation.displayOverline ?? content.overline;
   const subheadText = variation.displaySubhead ?? content.subhead;
   const headlineTreatment = variation.headlineTreatment ?? 'none';
+  const headlineLines = fitHeadlineLinesForPoster(variation.headlineLines, headlineLayout, {
+    allCaps: variation.headlineAllCaps,
+  });
   const headlineBlockStyle: CSSProperties = { ...headlineStyle };
   if (headlineLineClamp != null) {
     headlineBlockStyle.display = '-webkit-box';
@@ -517,17 +533,12 @@ function posterTextBlocks(
             </p>
           ) : null}
           <h1 style={headlineBlockStyle}>
-            {headlineLineNodes(
-              variation.headlineLines,
-              headlineTreatment,
-              accent,
-              headlineColor
-            )}
+            {headlineLineNodes(headlineLines, headlineTreatment, accent, headlineColor)}
           </h1>
           {subheadText ? (
             <p style={subheadBoxStyle(8 * t.s)}>{subheadText}</p>
           ) : null}
-          {content.cta ? ctaBlock(content.cta, t, theme, accent, { stacked: true }) : null}
+          {content.cta ? ctaBlock(content.cta, t, theme, accent, { stacked: true, shape: ctaShape }) : null}
           {content.footnote ? (
             <p
               style={{
@@ -582,24 +593,19 @@ function posterTextBlocks(
           flex: 1,
           display: 'flex',
           flexDirection: 'column',
-          justifyContent: 'flex-start',
+          justifyContent: 'center',
           minHeight: 0,
           paddingTop: centerPaddingY * t.s,
           paddingBottom: centerPaddingY * t.s,
         }}
       >
         <h1 style={headlineBlockStyle}>
-          {headlineLineNodes(
-            variation.headlineLines,
-            headlineTreatment,
-            accent,
-            headlineColor
-          )}
+          {headlineLineNodes(headlineLines, headlineTreatment, accent, headlineColor)}
         </h1>
         {subheadText ? (
           <p style={subheadBoxStyle(subheadMarginTop * t.s)}>{subheadText}</p>
         ) : null}
-        {content.cta ? ctaBlock(content.cta, t, theme, accent) : null}
+        {content.cta ? ctaBlock(content.cta, t, theme, accent, { shape: ctaShape }) : null}
       </div>
       <div style={{ flexShrink: 0, paddingTop: footnoteBlockPaddingTop * t.s }}>
         {content.footnote ? (
@@ -635,41 +641,48 @@ function posterTextBlocks(
 
 function ctaBlock(
   cta: string,
-  t: { cta: number; ctaBar: number; s: number },
+  t: { cta: number; s: number },
   theme: CreativeTheme,
   accent: string,
-  opts?: { stacked?: boolean }
+  opts?: { stacked?: boolean; shape?: 'pill' | 'square' }
 ): ReactNode {
   const stacked = opts?.stacked ?? false;
+  const shape = opts?.shape ?? 'pill';
+  const line = normalizePosterCta(cta);
+  const border = hexWithAlpha(accent, theme === 'dark' ? 0.48 : 0.38);
+  const fill = hexWithAlpha(accent, theme === 'dark' ? 0.18 : 0.12);
+  const ctaPx = t.cta * 1.08;
+  const shadow =
+    theme === 'dark'
+      ? `0 1px 0 rgba(0,0,0,0.35), inset 0 1px 0 ${hexWithAlpha('#ffffff', 0.08)}`
+      : `0 2px 8px rgba(78, 41, 187, 0.12), inset 0 1px 0 ${hexWithAlpha('#ffffff', 0.65)}`;
   return (
     <div
       style={{
-        display: 'flex',
-        flexDirection: 'row',
+        display: 'inline-flex',
         alignItems: 'center',
-        gap: 10 * t.s,
-        marginTop: stacked ? 0 : 16 * t.s,
+        alignSelf: 'flex-start',
+        maxWidth: '100%',
+        boxSizing: 'border-box',
+        marginTop: stacked ? 0 : 12 * t.s,
+        padding: `${7 * t.s}px ${16 * t.s}px`,
+        borderRadius: shape === 'pill' ? 9999 : 5 * t.s,
+        border: `1px solid ${border}`,
+        background: `linear-gradient(180deg, ${hexWithAlpha(accent, theme === 'dark' ? 0.22 : 0.16)} 0%, ${fill} 100%)`,
+        boxShadow: shadow,
       }}
     >
-      <div
-        style={{
-          width: t.ctaBar,
-          minHeight: Math.max(14 * t.s, t.cta * 1.1),
-          background: accent,
-          borderRadius: 1,
-          flexShrink: 0,
-        }}
-      />
       <p
         style={{
           margin: 0,
-          fontSize: t.cta,
-          fontWeight: POSTER_FONTS.cta,
+          fontSize: ctaPx,
+          fontWeight: 600,
+          letterSpacing: '0.03em',
           color: ctaTextColor(theme),
-          lineHeight: 1.3,
+          lineHeight: 1.2,
         }}
       >
-        {cta}
+        {line}
       </p>
     </div>
   );
@@ -703,7 +716,6 @@ function landscapeLayout(
     fontWeight: POSTER_FONTS.headline,
     color: textMain,
     letterSpacing: '-0.02em',
-    textWrap: 'balance' as const,
     maxWidth: '100%',
     fontFamily: POSTER_FONTS.family,
   };
@@ -722,6 +734,8 @@ function landscapeLayout(
     footnoteBlockPaddingTop: 8,
     footnoteGap: 6,
     headlineColor: textMain,
+    ctaShape: 'pill' as const,
+    headlineLayout: { format: 'landscape' as const, includeVisual },
   } as const;
 
   const textInner = posterTextBlocks(
@@ -757,7 +771,7 @@ function landscapeLayout(
           alignItems: 'center',
         }}
       >
-        <img src={posterLogoSrc(theme)} alt="" style={logoStyle(logoH)} />
+        <img src={posterLogoSrc(theme)} alt="" style={logoStyle(logoH, theme)} />
       </div>
       {includeVisual ? (
         <div
@@ -840,7 +854,7 @@ function landscapeLayout(
               height: '100%',
               display: 'flex',
               flexDirection: 'column',
-              justifyContent: 'space-between',
+              justifyContent: 'center',
               minWidth: 0,
               boxSizing: 'border-box',
             }}
@@ -869,7 +883,8 @@ function squareOrVertical(
   slidePager?: { current: number; total: number },
   isCarouselSurface = false
 ) {
-  const t = format === 'vertical' ? typeVertical(w) : typeSquare(w);
+  const t =
+    format === 'vertical' ? typeVertical(w) : isCarouselSurface ? typeCarousel(w) : typeSquare(w);
   const pad = (format === 'square' ? PAD_PX_SQUARE : PAD_PX) * t.s;
   const textMain = theme === 'dark' ? '#FFFFFF' : '#0A0A0A';
   const accent = ACCENTS[variation.accent].color;
@@ -885,7 +900,6 @@ function squareOrVertical(
     fontWeight: POSTER_FONTS.headline,
     color: textMain,
     letterSpacing: '-0.02em',
-    textWrap: 'balance' as const,
     fontFamily: POSTER_FONTS.family,
   };
   if (theme === 'dark') {
@@ -896,27 +910,22 @@ function squareOrVertical(
     headlineStyle.letterSpacing = '0.04em';
   }
 
-  const textOptions = isCarouselSurface
-    ? {
-        overlineLetterSpacing: '0.1em',
-        centerPaddingY: format === 'vertical' ? 4 : 4,
-        subheadMarginTop: 20,
-        footnoteBlockPaddingTop: 6,
-        footnoteGap: 4,
-        headlineColor: textMain,
-        layout: (isSquareTight ? 'squareStack' : 'default') as 'default' | 'squareStack',
-        stackGap: isSquareTight ? 9 * t.s : undefined,
-      }
-    : ({
-        overlineLetterSpacing: '0.1em',
-        centerPaddingY: format === 'vertical' ? 4 : 4,
-        subheadMarginTop: 20,
-        footnoteBlockPaddingTop: 6,
-        footnoteGap: 4,
-        headlineColor: textMain,
-        layout: (isSquareTight ? 'squareStack' : 'default') as 'default' | 'squareStack',
-        stackGap: isSquareTight ? 9 * t.s : undefined,
-      } as const);
+  const ctaShape: 'pill' | 'square' = format === 'square' && !isCarouselSurface ? 'square' : 'pill';
+  const headlineLayout: PosterHeadlineLayout = isCarouselSurface
+    ? { format: 'carousel', includeVisual }
+    : { format, includeVisual };
+  const textOptions = {
+    overlineLetterSpacing: '0.1em',
+    centerPaddingY: 4,
+    subheadMarginTop: 20,
+    footnoteBlockPaddingTop: 6,
+    footnoteGap: 4,
+    headlineColor: textMain,
+    layout: (isSquareTight ? 'squareStack' : 'default') as 'default' | 'squareStack',
+    stackGap: isSquareTight ? 9 * t.s : undefined,
+    ctaShape,
+    headlineLayout,
+  } as const;
 
   const textInner = posterTextBlocks(
     t,
@@ -937,7 +946,7 @@ function squareOrVertical(
         display: 'flex',
         flexDirection: 'column',
         width: '100%',
-        ...(format === 'vertical' ? { justifyContent: 'space-between' as const } : {}),
+        ...(format === 'vertical' ? { justifyContent: 'center' as const } : {}),
       }}
     >
       {textInner}
@@ -970,7 +979,7 @@ function squareOrVertical(
           alignItems: 'center',
         }}
       >
-        <img src={posterLogoSrc(theme)} alt="" style={logoStyle(logoH)} />
+        <img src={posterLogoSrc(theme)} alt="" style={logoStyle(logoH, theme)} />
       </div>
       {includeVisual ? (
         <div
@@ -1054,7 +1063,7 @@ function squareOrVertical(
               height: '100%',
               display: 'flex',
               flexDirection: 'column',
-              justifyContent: isSquareTight ? 'center' : 'space-between',
+              justifyContent: 'center',
               minWidth: 0,
               boxSizing: 'border-box',
             }}

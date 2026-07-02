@@ -1,5 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import type { UltronUser } from './authSession';
+import { isAckoStaffEmail } from './ackoEmail';
+import { formatNameFromEmail } from './displayName';
 import { isValidDemoLogin, ULTRON_DEMO_EMAIL, ULTRON_DEMO_PASSWORD } from './demoCredentials';
 import { fetchGoogleProfile, getGoogleClientId, signInWithGoogleAccessToken } from './googleAuth';
 import { publicAsset } from './publicUrl';
@@ -24,13 +26,16 @@ export function LoginCard({ onAuthed, className, idPrefix = 'login' }: CardProps
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
     setError('');
+    if (!isAckoStaffEmail(email)) {
+      setError('Sign in is restricted to @acko.com and @acko.tech email addresses.');
+      return;
+    }
     if (!isValidDemoLogin(email, password)) {
       setError('Invalid email or password.');
       return;
     }
     const local = email.trim().toLowerCase();
-    const displayName = local.includes('@') ? local.split('@')[0]! : local || 'Demo user';
-    onAuthed({ kind: 'demo', email: local, name: displayName });
+    onAuthed({ kind: 'demo', email: local, name: formatNameFromEmail(local) });
   };
 
   const onGoogle = async () => {
@@ -46,6 +51,10 @@ export function LoginCard({ onAuthed, className, idPrefix = 'login' }: CardProps
     try {
       const token = await signInWithGoogleAccessToken(clientId);
       const profile = await fetchGoogleProfile(token);
+      if (!isAckoStaffEmail(profile.email)) {
+        setGoogleError('Google sign-in is restricted to @acko.com and @acko.tech accounts.');
+        return;
+      }
       onAuthed({
         kind: 'google',
         email: profile.email,

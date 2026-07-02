@@ -1,3 +1,4 @@
+import { normalizePosterCta } from './posterCopyClamp';
 import { clampCarouselSlideCount, type PosterContent } from './posterTypes';
 
 /** Narrative beat for one carousel card (order is chosen by `assignRolesForSlideCount`). */
@@ -108,7 +109,7 @@ export function parseCarouselPlanRow(
     visual_direction: visual,
     composition,
     overline: strField(raw, 'overline') || undefined,
-    cta: strField(raw, 'cta') || 'Talk to us about ACKO for Business',
+    cta: normalizePosterCta(strField(raw, 'cta') || 'Talk to us about ACKO for Business'),
     hashtags: strField(raw, 'hashtags') || 'ACKO, Insurance, B2B',
   };
 }
@@ -132,7 +133,7 @@ export function synthesizeCarouselPlanFromPosterContents(
         ? 'Centered focal object with wide negative space and soft depth.'
         : 'Asymmetrical composition with diagonal tension and off-center focal mass.',
     overline: s.overline.trim() || undefined,
-    cta: s.cta.trim() || 'Talk to us about ACKO for Business',
+    cta: normalizePosterCta(s.cta.trim() || 'Talk to us about ACKO for Business'),
     hashtags: s.hashtags.trim() || 'ACKO, Insurance, B2B',
   }));
 }
@@ -144,7 +145,7 @@ export function mapCarouselPlanToPosterContents(plan: CarouselPlanSlide[]): Post
     overline: (p.overline ?? 'Enterprise').trim() || 'Enterprise',
     headline: p.headline.trim(),
     subhead: p.copy.replace(/\s+/g, ' ').trim(),
-    cta: p.cta.trim() || 'Talk to us about ACKO for Business',
+    cta: normalizePosterCta(p.cta.trim() || 'Talk to us about ACKO for Business'),
     footnote: `Slide ${i + 1} of ${total} · Issued by ACKO. T&C apply.`,
     hashtags: p.hashtags.trim() || 'ACKO, Insurance, B2B',
   }));

@@ -1,0 +1,22 @@
+---
+description: ACKO Enterprise visual rules for AI hero images, carousel scene planning, and hero-related codegen.
+alwaysApply: false
+globs: src/openaiHeroImage.ts,src/openaiStudioContent.ts,src/freepikHeroImage.ts,src/buildVariations.ts,src/staticHeroSlots.ts
+---
+
+# Enterprise visual guidelines (canonical)
+
+The **full** visual generation and carousel scene spec lives in the repo at:
+
+`src/enterprise-visual-guidelines.md`
+
+## Rules for agents and codegen
+
+1. **Do not duplicate** the full document in chat or in long code comments — edit `src/enterprise-visual-guidelines.md` when the programme updates visual policy.
+2. **`enterpriseVisualGuidelines.ts`** imports that file (raw) and exposes blocks appended at runtime to:
+   - static/carousel **image** prompts in `openaiHeroImage.ts`
+   - carousel **plan** system messages in `openaiStudioContent.ts` (`buildCarouselPlanSystem`)
+3. Keep **this rule**, **`src/enterprise-visual-guidelines.md`**, **`enterpriseVisualGuidelines.ts`**, and prompt builders aligned. Dynamic-only logic (accent hint, theme, modality scoring, plan row text, slide index) stays in TypeScript.
+4. Poster **placement** (60/40 column, one hero) remains in `acko-social-poster-layout.mdc`; **logo** paths remain in `acko-poster-logo-strict.mdc`.
+5. **`photorealHuman`** is allowed on static posters only; **never** on carousel slides.
+6. **Illustrative** outputs (`illustration` modality, `stylizedIllustration`, carousel illustration family) must be **very high quality** editorial illustration per §2.7 in the markdown—not sketch, clip-art, or draft quality.

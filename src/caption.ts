@@ -1,4 +1,5 @@
 import type { PosterContent } from './posterTypes';
+import { normalizePosterCta } from './posterCopyClamp';
 
 export function buildLinkedInCaption(content: PosterContent): string {
   const blocks: string[] = [];
@@ -8,8 +9,9 @@ export function buildLinkedInCaption(content: PosterContent): string {
   if (content.subhead.trim()) {
     blocks.push(content.subhead.trim());
   }
-  if (content.cta.trim()) {
-    blocks.push(content.cta.trim());
+  const ctaNorm = normalizePosterCta(content.cta);
+  if (ctaNorm) {
+    blocks.push(ctaNorm);
   }
   if (content.footnote.trim()) {
     blocks.push(content.footnote.trim());

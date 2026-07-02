@@ -85,6 +85,17 @@ export type HeadlineTreatment =
   | 'accentLastWordFirstLine'
   | 'underlineSecondLine';
 
+/**
+ * Non-carousel poster hero slot only. Carousel slides always use the plan-based hero path
+ * and must never use `photorealHuman`.
+ */
+export type PosterHeroVisualStyle =
+  | 'default'
+  /** Second abstract / soft-3D hero for the same campaign (distinct composition from `default`). */
+  | 'defaultAlt'
+  | 'photorealHuman'
+  | 'stylizedIllustration';
+
 export type Variation = {
   id: string;
   label: string;
@@ -93,6 +104,11 @@ export type Variation = {
   accent: AccentId;
   /** Distinct premium canvas recipe (0–7) for export backgrounds per creative option. */
   backgroundStyleId?: number;
+  /**
+   * Static poster only: which AI hero treatment this layout option expects in the right column.
+   * Omitted or `default` uses the standard non-photoreal hero policy; `defaultAlt` is a second distinct abstract hero.
+   */
+  heroVisualStyle?: PosterHeroVisualStyle;
   /** 1–3 non-empty lines; always capped for poster layout. */
   headlineLines: string[];
   /** When true, headline uses uppercase + tracking tuned for all-caps. */

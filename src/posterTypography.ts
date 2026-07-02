@@ -26,7 +26,7 @@ const LANDSCAPE: Step = {
   headline: 64,
   subheadFromHeadline: 0.25,
   overline: 11,
-  ctaFromHeadline: 0.34,
+  ctaFromHeadline: 0.28,
   ctaBar: 3,
   footnote: 10,
   hashtag: 8.5,
@@ -37,7 +37,7 @@ const SQUARE: Step = {
   headline: 66,
   subheadFromHeadline: 0.25,
   overline: 10,
-  ctaFromHeadline: 0.34,
+  ctaFromHeadline: 0.28,
   ctaBar: 3,
   footnote: 9,
   hashtag: 8,
@@ -47,10 +47,21 @@ const VERTICAL: Step = {
   headline: 54,
   subheadFromHeadline: 0.25,
   overline: 10,
-  ctaFromHeadline: 0.34,
+  ctaFromHeadline: 0.28,
   ctaBar: 3,
   footnote: 9,
   hashtag: 7.5,
+};
+
+/** LinkedIn document carousel (1080×1080 slides) — slightly larger than feed square for slide legibility. */
+const CAROUSEL: Step = {
+  headline: 78,
+  subheadFromHeadline: 0.26,
+  overline: 11,
+  ctaFromHeadline: 0.26,
+  ctaBar: 3,
+  footnote: 9,
+  hashtag: 8,
 };
 
 export type PosterTypeSizes = {
@@ -89,6 +100,10 @@ export function typeSquare(w: number): PosterTypeSizes {
 
 export function typeVertical(w: number): PosterTypeSizes {
   return step(w, DESIGN.square, VERTICAL);
+}
+
+export function typeCarousel(w: number): PosterTypeSizes {
+  return step(w, DESIGN.square, CAROUSEL);
 }
 
 export const POSTER_FONTS = {

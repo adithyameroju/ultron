@@ -9,6 +9,7 @@ import {
   expandToFourCopyRoutes,
   mergeCopyAndLayoutVariation,
 } from './buildVariations';
+import type { PosterHeadlineLayout } from './headlineLineFit';
 import { buildLinkedInCaption } from './caption';
 import {
   CAROUSEL_SLIDE_COUNT,
@@ -27,6 +28,7 @@ import {
   heroLibraryAssetUrl,
   type HeroLibraryId,
 } from './heroIllustrations';
+import { hasAnyStaticHeroForCopy, staticHeroSlotKey, STATIC_HERO_STYLES } from './staticHeroSlots';
 import {
   buildCarouselSlideHeroImagePrompt,
   buildHeroImagePrompt,
@@ -43,6 +45,7 @@ import {
 } from './heroAiHistoryStorage';
 import './App.css';
 import type { UltronUser } from './authSession';
+import { displayInitialFromUser, displayShortNameFromUser } from './displayName';
 
 /** Prefill editor fields from the merged poster variation (active copy × design). */
 function draftSliceFromVariation(base: PosterContent, variation: Variation): PosterContent {
@@ -83,17 +86,8 @@ function blobToDataUrl(blob: Blob): Promise<string> {
   });
 }
 
-function displayFirstName(name: string): string {
-  const t = name.trim();
-  if (!t) {
-    return '';
-  }
-  return t.split(/\s+/)[0] ?? t;
-}
-
-function displayInitial(name: string, email: string): string {
-  const n = displayFirstName(name) || (email.includes('@') ? email.split('@')[0]! : email) || '?';
-  return n.slice(0, 1).toUpperCase();
+function ThumbViewCta() {
+  return <span className="thumb-hover-cta">View image</span>;
 }
 
 async function finalizeHeroDataUrl(
@@ -106,8 +100,8 @@ async function finalizeHeroDataUrl(
   if (!result.usedNativeTransparency) {
     try {
       finalUrl = await flatWhiteToTransparentPng(result.dataUrl, {
-        whiteCutoff: 58,
-        feather: 28,
+        whiteCutoff: 50,
+        feather: 30,
       });
     } catch {
       finalUrl = result.dataUrl;
@@ -116,11 +110,36 @@ async function finalizeHeroDataUrl(
   return finalUrl;
 }
 
+/** Bounded parallel map — faster than strict sequential calls without unbounded fan-out to the API. */
+const CAROUSEL_HERO_GEN_CONCURRENCY = 3;
+
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+  const worker = async () => {
+    for (;;) {
+      const i = nextIndex;
+      nextIndex += 1;
+      if (i >= items.length) {
+        break;
+      }
+      results[i] = await mapper(items[i]!, i);
+    }
+  };
+  const pool = Math.min(Math.max(1, concurrency), Math.max(1, items.length));
+  await Promise.all(Array.from({ length: pool }, () => worker()));
+  return results;
+}
+
 type StudioVersion = 'v1' | 'v2';
 type V2Phase = 'prompt' | 'editing';
 
 const initialContent: PosterContent = {
-  overline: 'Enterprise',
+  overline: '',
   headline: 'Insurance that moves as fast as your business',
   subhead:
     'Digitise cover, cut paperwork, and give your teams a clearer picture of risk—without the usual friction.',
@@ -136,7 +155,7 @@ type GeneratedBundle = {
   includeVisual: boolean;
   /** V2 LinkedIn carousel: one `PosterContent` per slide (same dimensions as square). */
   carouselSlides?: PosterContent[];
-  /** Per-slide GPT Image heroes (data URLs), aligned with `carouselSlides`. */
+  /** Per-slide hero image URLs (data URLs), aligned with `carouselSlides`. */
   carouselHeroUrls?: (string | null)[];
   /** Structured narrative + art direction per slide (Step 1 plan). */
   carouselPlan?: CarouselPlanSlide[];
@@ -156,6 +175,18 @@ function App({ user, onSignOut }: AppProps) {
   const [draft, setDraft] = useState<PosterContent>(initialContent);
   const [format, setFormat] = useState<LinkedInFormatId>('landscape');
   const [theme, setTheme] = useState<CreativeTheme>('dark');
+  /** Studio chrome (shell) — independent of poster Light/Dark creative. */
+  const [shellTheme, setShellTheme] = useState<'dark' | 'light'>(() => {
+    try {
+      const s = localStorage.getItem('ultron-shell-theme');
+      if (s === 'light' || s === 'dark') {
+        return s;
+      }
+    } catch {
+      /* ignore */
+    }
+    return 'dark';
+  });
   const [includeVisual, setIncludeVisual] = useState(true);
   const [generated, setGenerated] = useState<GeneratedBundle | null>(null);
   const [selected, setSelected] = useState(0);
@@ -168,8 +199,11 @@ function App({ user, onSignOut }: AppProps) {
   const [heroLibrary, setHeroLibrary] = useState<HeroLibraryId>('default');
   /** Active sub-panel under Visuals (so AI tab shows before first image exists). */
   const [heroUiTab, setHeroUiTab] = useState<'default' | 'library' | 'ai'>('default');
-  /** OpenAI GPT Image / DALL·E hero (data URL). */
+  /** Carousel: mirror of the active slide hero URL. Static posters use `staticHeroImageMap` only. */
   const [heroAiUrl, setHeroAiUrl] = useState<string | null>(null);
+  /** Static poster: keyed `copyIndex:heroVisualStyle` → data URL (four copy routes × four layout heroes). */
+  const [staticHeroImageMap, setStaticHeroImageMap] = useState<Record<string, string>>({});
+  const [staticHeroDeckLoading, setStaticHeroDeckLoading] = useState(false);
   const [heroAiLoading, setHeroAiLoading] = useState(false);
   const [heroAiError, setHeroAiError] = useState<string | null>(null);
   /** When true with `heroLibrary === 'default'`, poster shows shield even if `heroAiUrl` is set (AI stays saved). */
@@ -188,9 +222,21 @@ function App({ user, onSignOut }: AppProps) {
   const [carouselSlideIndex, setCarouselSlideIndex] = useState(0);
   const carouselSlideIndexRef = useRef(0);
   const [carouselHeroBusy, setCarouselHeroBusy] = useState(false);
-  const [carouselHeroGenIndex, setCarouselHeroGenIndex] = useState<number | null>(null);
+  const generatedRef = useRef(generated);
+  generatedRef.current = generated;
+  const ncCopyIdxRef = useRef(ncCopyIdx);
+  ncCopyIdxRef.current = ncCopyIdx;
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const profileClusterRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    document.documentElement.dataset.shellTheme = shellTheme;
+    try {
+      localStorage.setItem('ultron-shell-theme', shellTheme);
+    } catch {
+      /* ignore */
+    }
+  }, [shellTheme]);
   const exportRef = useRef<HTMLDivElement>(null);
   const lightboxExportRef = useRef<HTMLDivElement>(null);
   const bootTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -265,7 +311,7 @@ function App({ user, onSignOut }: AppProps) {
     if (footerPrimaryBusy) {
       if (v2PrimaryUsesPromptPipeline) {
         if (v2FromPromptLoading) {
-          return format === 'carousel' ? 'Generating carousel copy…' : 'Generating copy & creatives…';
+          return format === 'carousel' ? 'Generating carousel copy…' : 'Generating image…';
         }
         if (carouselHeroBusy) {
           return 'Generating slide visuals…';
@@ -277,7 +323,7 @@ function App({ user, onSignOut }: AppProps) {
       return 'Working…';
     }
     if (v2PrimaryUsesPromptPipeline) {
-      return format === 'carousel' ? 'Generate carousel from prompt' : 'Generate copy & creatives from prompt';
+      return format === 'carousel' ? 'Generate carousel from prompt' : 'Generate image';
     }
     return 'Generate Creatives';
   }, [
@@ -289,17 +335,14 @@ function App({ user, onSignOut }: AppProps) {
     format,
   ]);
 
-  /** True while workspace preview area should show a generating / shimmer state. */
-  const workspacePreviewGenerating = useMemo(
-    () => isBooting || v2FromPromptLoading || carouselHeroBusy,
-    [isBooting, v2FromPromptLoading, carouselHeroBusy]
-  );
-
-  /** Carousel layout strip: stay interactive while per-slide AI heroes generate (use for `--busy` only there). */
-  const workspaceCarouselLayoutBusy = useMemo(
+  /** Copy / boot in flight — shimmer poster and design thumbnails (not hero-only work). */
+  const workspaceCopyGenerating = useMemo(
     () => isBooting || v2FromPromptLoading,
     [isBooting, v2FromPromptLoading]
   );
+
+  /** Carousel layout strip: shimmer while copy is generating. */
+  const workspaceCarouselLayoutBusy = workspaceCopyGenerating;
 
   const generate = useCallback(() => {
     if (!canGenerate) {
@@ -342,17 +385,19 @@ function App({ user, onSignOut }: AppProps) {
         includeVisual,
       };
     }
+    const wantsHeroAfter =
+      includeVisual && heroUiTab === 'ai' && Boolean(openaiApiKey.trim());
     const noMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (noMotion) {
+    if (noMotion || wantsHeroAfter) {
       if (!canGenerate) {
         return;
       }
-      pendingHeroAfterBootRef.current =
-        includeVisual && heroUiTab === 'ai' && Boolean(openaiApiKey.trim());
+      pendingHeroAfterBootRef.current = wantsHeroAfter;
       setGenerated(next);
       setSelected(0);
       setNcCopyIdx(0);
       setHeroAiUrl(null);
+      setStaticHeroImageMap({});
       setHeroAiError(null);
       setHeroShieldPreferred(true);
       return;
@@ -370,6 +415,7 @@ function App({ user, onSignOut }: AppProps) {
       setIsBooting(false);
       bootTimeoutRef.current = null;
       setHeroAiUrl(null);
+      setStaticHeroImageMap({});
       setHeroAiError(null);
       setHeroShieldPreferred(true);
     }, 2600);
@@ -398,6 +444,7 @@ function App({ user, onSignOut }: AppProps) {
     setHeroLibrary('default');
     setHeroUiTab('default');
     setHeroAiUrl(null);
+    setStaticHeroImageMap({});
     setHeroAiError(null);
     setHeroAiLoading(false);
     setHeroShieldPreferred(true);
@@ -408,7 +455,7 @@ function App({ user, onSignOut }: AppProps) {
     setV2ShowCopyEditor(false);
     setCarouselSlideIndex(0);
     setCarouselHeroBusy(false);
-    setCarouselHeroGenIndex(null);
+    setStaticHeroDeckLoading(false);
     setProfileMenuOpen(false);
     setDraft({ ...initialContent });
     void (async () => {
@@ -486,22 +533,38 @@ function App({ user, onSignOut }: AppProps) {
   const applyHeroAiFromHistory = useCallback(async (entry: HeroAiHistoryEntry) => {
     try {
       const url = await blobToDataUrl(entry.blob);
-      setHeroAiUrl(url);
       setHeroShieldPreferred(false);
       setHeroUiTab('ai');
       setHeroAiError(null);
-      setGenerated((prev) => {
-        if (!prev || prev.format !== 'carousel' || !prev.carouselSlides?.length) {
-          return prev;
-        }
-        const idx = carouselSlideIndexRef.current;
-        const next = [...(prev.carouselHeroUrls ?? prev.carouselSlides.map(() => null))];
-        while (next.length < prev.carouselSlides.length) {
-          next.push(null);
-        }
-        next[idx] = url;
-        return { ...prev, carouselHeroUrls: next };
-      });
+      const bundle = generatedRef.current;
+      if (bundle?.format === 'carousel' && bundle.carouselSlides?.length) {
+        setHeroAiUrl(url);
+        setGenerated((prev) => {
+          if (!prev || prev.format !== 'carousel' || !prev.carouselSlides?.length) {
+            return prev;
+          }
+          const idx = carouselSlideIndexRef.current;
+          const next = [...(prev.carouselHeroUrls ?? prev.carouselSlides.map(() => null))];
+          while (next.length < prev.carouselSlides.length) {
+            next.push(null);
+          }
+          next[idx] = url;
+          return { ...prev, carouselHeroUrls: next };
+        });
+      } else {
+        setHeroAiUrl(null);
+        const src = bundle?.content;
+        const copyLen = src ? Math.max(1, buildCopyVisualStrip(src).length) : 1;
+        setStaticHeroImageMap((prev) => {
+          const next = { ...prev };
+          for (let ci = 0; ci < copyLen; ci++) {
+            for (const st of STATIC_HERO_STYLES) {
+              next[staticHeroSlotKey(ci, st)] = url;
+            }
+          }
+          return next;
+        });
+      }
     } catch {
       setHeroAiError('Could not load saved image from history.');
     }
@@ -515,6 +578,13 @@ function App({ user, onSignOut }: AppProps) {
     },
     []
   );
+
+  const posterHeadlineLayout = useMemo((): PosterHeadlineLayout | undefined => {
+    if (!generated) {
+      return undefined;
+    }
+    return { format: generated.format, includeVisual: generated.includeVisual };
+  }, [generated]);
 
   const previewContent = useMemo(() => {
     if (!generated) {
@@ -537,8 +607,8 @@ function App({ user, onSignOut }: AppProps) {
       return [];
     }
     const src = studioVersion === 'v2' && v2Phase === 'editing' ? previewContent : generated.content;
-    return buildCopyVisualStrip(src);
-  }, [generated, studioVersion, v2Phase, previewContent]);
+    return buildCopyVisualStrip(src, posterHeadlineLayout);
+  }, [generated, studioVersion, v2Phase, previewContent, posterHeadlineLayout]);
 
   const layoutStripVariations = useMemo(() => {
     if (!generated) {
@@ -548,20 +618,20 @@ function App({ user, onSignOut }: AppProps) {
       return [];
     }
     const src = studioVersion === 'v2' && v2Phase === 'editing' ? previewContent : generated.content;
-    const copy = buildCopyVisualStrip(src);
+    const copy = buildCopyVisualStrip(src, posterHeadlineLayout);
     const base = copy[Math.min(ncCopyIdx, Math.max(0, copy.length - 1))]!;
     return buildLayoutAccentStrip(base);
-  }, [generated, studioVersion, v2Phase, previewContent, ncCopyIdx]);
+  }, [generated, studioVersion, v2Phase, previewContent, ncCopyIdx, posterHeadlineLayout]);
 
   const variations = useMemo(() => {
     if (!generated) {
       return [];
     }
     if (generated.format === 'carousel' && generated.carouselSlides?.length) {
-      return buildVariations(previewContent);
+      return buildVariations(previewContent, posterHeadlineLayout);
     }
     return layoutStripVariations;
-  }, [generated, previewContent, layoutStripVariations]);
+  }, [generated, previewContent, layoutStripVariations, posterHeadlineLayout]);
 
   useEffect(() => {
     setSelected((i) => (i < variations.length ? i : 0));
@@ -649,12 +719,16 @@ function App({ user, onSignOut }: AppProps) {
         heroMatchPosterBackdrop: false as const,
       };
     }
-    if (!heroShieldPreferred && heroAiUrl) {
-      return {
-        resolvedHeroImageUrl: heroAiUrl,
-        resolvedHeroImageObjectFit: 'contain' as const,
-        heroMatchPosterBackdrop: false as const,
-      };
+    const heroStyle = v?.heroVisualStyle ?? 'default';
+    if (!heroShieldPreferred) {
+      const aiSlot = staticHeroImageMap[staticHeroSlotKey(ncCopyIdx, heroStyle)] ?? null;
+      if (aiSlot) {
+        return {
+          resolvedHeroImageUrl: aiSlot,
+          resolvedHeroImageObjectFit: 'contain' as const,
+          heroMatchPosterBackdrop: false as const,
+        };
+      }
     }
     return {
       resolvedHeroImageUrl: null as string | null,
@@ -665,10 +739,13 @@ function App({ user, onSignOut }: AppProps) {
     heroLibrary,
     heroAiUrl,
     heroShieldPreferred,
+    v?.heroVisualStyle,
     generated?.format,
     generated?.carouselHeroUrls,
     generated?.carouselSlides?.length,
     carouselSlideIndex,
+    staticHeroImageMap,
+    ncCopyIdx,
   ]);
 
   const carouselSlidePager = useMemo(() => {
@@ -681,8 +758,18 @@ function App({ user, onSignOut }: AppProps) {
   const heroImageLoading = useMemo(
     () =>
       heroAiLoading ||
-      (carouselHeroBusy && carouselHeroGenIndex !== null && carouselHeroGenIndex === carouselSlideIndex),
-    [heroAiLoading, carouselHeroBusy, carouselHeroGenIndex, carouselSlideIndex]
+      staticHeroDeckLoading ||
+      (carouselHeroBusy &&
+        generated?.format === 'carousel' &&
+        !generated.carouselHeroUrls?.[carouselSlideIndex]),
+    [
+      heroAiLoading,
+      staticHeroDeckLoading,
+      carouselHeroBusy,
+      generated?.format,
+      generated?.carouselHeroUrls,
+      carouselSlideIndex,
+    ]
   );
 
   /** Per-slide hero for export and carousel previews — only `carouselHeroUrls[i]` for carousel (no global hero leak). */
@@ -707,10 +794,96 @@ function App({ user, onSignOut }: AppProps) {
       if (heroShieldPreferred) {
         return null;
       }
-      return heroAiUrl;
+      const st = v?.heroVisualStyle ?? 'default';
+      return staticHeroImageMap[staticHeroSlotKey(ncCopyIdx, st)] ?? null;
     },
-    [heroLibrary, heroShieldPreferred, generated?.format, generated?.carouselSlides?.length, generated?.carouselHeroUrls, heroAiUrl]
+    [
+      heroLibrary,
+      heroShieldPreferred,
+      generated?.format,
+      generated?.carouselSlides?.length,
+      generated?.carouselHeroUrls,
+      heroAiUrl,
+      staticHeroImageMap,
+      ncCopyIdx,
+      v?.heroVisualStyle,
+    ]
   );
+
+  /** Static workspace thumbnails: pick the saved AI URL for this copy×layout merge (not only the active layout). */
+  const staticAiHeroUrlForMerged = useCallback(
+    (merged: Variation | null | undefined, copyIdx: number): string | null => {
+      if (!merged || !generated || generated.format === 'carousel') {
+        return null;
+      }
+      if (heroLibrary !== 'default') {
+        return heroLibraryAssetUrl(heroLibrary);
+      }
+      if (heroShieldPreferred) {
+        return null;
+      }
+      const st = merged.heroVisualStyle ?? 'default';
+      return staticHeroImageMap[staticHeroSlotKey(copyIdx, st)] ?? null;
+    },
+    [generated, heroLibrary, heroShieldPreferred, staticHeroImageMap]
+  );
+
+  /** Hero spinner on workspace thumbs only when that slot is still waiting (avoids all tiles looking broken). */
+  const thumbHeroLoading = useCallback(
+    (copyIdx: number, merged: Variation | null | undefined): boolean => {
+      if (!generated?.includeVisual || generated.format === 'carousel') {
+        return false;
+      }
+      if (heroLibrary !== 'default' || heroShieldPreferred) {
+        return false;
+      }
+      if (staticAiHeroUrlForMerged(merged, copyIdx)) {
+        return false;
+      }
+      return heroAiLoading || staticHeroDeckLoading;
+    },
+    [
+      generated?.includeVisual,
+      generated?.format,
+      heroLibrary,
+      heroShieldPreferred,
+      staticAiHeroUrlForMerged,
+      heroAiLoading,
+      staticHeroDeckLoading,
+    ]
+  );
+
+  const showClearAiVisual = useMemo(() => {
+    if (!generated) {
+      return false;
+    }
+    if (generated.format === 'carousel' && generated.carouselSlides?.length) {
+      return Boolean(generated.carouselHeroUrls?.[carouselSlideIndex] ?? heroAiUrl);
+    }
+    return Object.keys(staticHeroImageMap).length > 0;
+  }, [
+    generated,
+    generated?.carouselHeroUrls,
+    carouselSlideIndex,
+    heroAiUrl,
+    staticHeroImageMap,
+  ]);
+
+  const heroAiThumbPreviewUrl = useMemo(() => {
+    if (resolvedHeroImageUrl) {
+      return resolvedHeroImageUrl;
+    }
+    if (generated?.format === 'carousel') {
+      return heroAiUrl;
+    }
+    for (const s of STATIC_HERO_STYLES) {
+      const u = staticHeroImageMap[staticHeroSlotKey(ncCopyIdx, s)];
+      if (u) {
+        return u;
+      }
+    }
+    return null;
+  }, [resolvedHeroImageUrl, generated?.format, heroAiUrl, staticHeroImageMap, ncCopyIdx]);
 
   const heroStatusLabel = useMemo(() => {
     if (!includeVisual) {
@@ -719,16 +892,40 @@ function App({ user, onSignOut }: AppProps) {
     if (heroLibrary !== 'default') {
       const ent = HERO_LIBRARY_ENTRIES.find((e) => e.id === heroLibrary);
       const lib = `Hero: Library — ${ent?.label ?? heroLibrary}`;
-      return heroAiUrl ? `${lib} · AI visual saved` : lib;
+      const hasAiBacking =
+        generated?.format === 'carousel'
+          ? Boolean(heroAiUrl || generated.carouselHeroUrls?.some(Boolean))
+          : Object.keys(staticHeroImageMap).length > 0;
+      return hasAiBacking ? `${lib} · AI visual saved` : lib;
     }
-    if (heroAiUrl && !heroShieldPreferred) {
-      return 'Hero: AI-generated (GPT Image)';
+    const hasStaticThisCopy =
+      generated != null &&
+      generated.format !== 'carousel' &&
+      hasAnyStaticHeroForCopy(staticHeroImageMap, ncCopyIdx);
+    const hasCarouselAi =
+      generated?.format === 'carousel' &&
+      Boolean(generated.carouselHeroUrls?.[carouselSlideIndex] ?? heroAiUrl);
+    const showingAi =
+      !heroShieldPreferred && (hasStaticThisCopy || (generated?.format === 'carousel' && hasCarouselAi));
+    if (showingAi) {
+      return 'Hero: AI-generated image';
     }
-    if (heroAiUrl && heroShieldPreferred) {
+    if ((hasStaticThisCopy || hasCarouselAi) && heroShieldPreferred) {
       return 'Hero: Built-in shield · AI visual saved (open AI tab to apply)';
     }
     return 'Hero: Built-in shield';
-  }, [includeVisual, heroAiUrl, heroLibrary, heroShieldPreferred]);
+  }, [
+    includeVisual,
+    heroAiUrl,
+    heroLibrary,
+    heroShieldPreferred,
+    generated,
+    generated?.format,
+    generated?.carouselHeroUrls,
+    carouselSlideIndex,
+    staticHeroImageMap,
+    ncCopyIdx,
+  ]);
 
   const openDefaultHero = useCallback(() => {
     setHeroUiTab('default');
@@ -745,9 +942,11 @@ function App({ user, onSignOut }: AppProps) {
       if (h !== 'default') {
         return h;
       }
-      return heroAiUrl ? 'default' : HERO_LIBRARY_ENTRIES[0]!.id;
+      return heroAiUrl || Object.keys(staticHeroImageMap).length > 0
+        ? 'default'
+        : HERO_LIBRARY_ENTRIES[0]!.id;
     });
-  }, [heroAiUrl]);
+  }, [heroAiUrl, staticHeroImageMap]);
 
   const openAiHeroTab = useCallback(() => {
     setHeroUiTab('ai');
@@ -761,6 +960,7 @@ function App({ user, onSignOut }: AppProps) {
     }
     setHeroAiError(null);
     setHeroAiLoading(true);
+    try {
     const heroBase =
       generated.format === 'carousel' && generated.carouselSlides?.length
         ? generated.carouselSlides[carouselSlideIndex] ?? generated.content
@@ -798,8 +998,8 @@ function App({ user, onSignOut }: AppProps) {
       format: generated.format,
       apiKey: openaiApiKey,
     });
-    setHeroAiLoading(false);
     if (result.ok) {
+      setHeroAiLoading(false);
       setHeroUiTab('ai');
       setHeroShieldPreferred(false);
       const finalUrl = await finalizeHeroDataUrl(result);
@@ -807,8 +1007,8 @@ function App({ user, onSignOut }: AppProps) {
         setHeroAiError('Could not process the generated image.');
         return;
       }
-      setHeroAiUrl(finalUrl);
       if (generated.format === 'carousel' && generated.carouselSlides?.length) {
+        setHeroAiUrl(finalUrl);
         const idx = carouselSlideIndex;
         setGenerated((prev) => {
           if (!prev?.carouselSlides?.length || prev.format !== 'carousel') {
@@ -821,23 +1021,114 @@ function App({ user, onSignOut }: AppProps) {
           next[idx] = finalUrl;
           return { ...prev, carouselHeroUrls: next };
         });
-      }
-      try {
-        await saveHeroAiToHistory({
-          dataUrl: finalUrl,
-          headlinePreview: heroCopy.headline,
-          format: generated.format,
+      } else {
+        setHeroAiUrl(null);
+        const srcForStrip =
+          studioVersion === 'v2' && v2Phase === 'editing' ? previewContent : generated.content;
+        const copyLen = Math.max(1, buildCopyVisualStrip(srcForStrip, posterHeadlineLayout).length);
+        setStaticHeroImageMap((prev) => {
+          const next = { ...prev };
+          for (let ci = 0; ci < copyLen; ci++) {
+            for (const st of STATIC_HERO_STYLES) {
+              next[staticHeroSlotKey(ci, st)] = finalUrl;
+            }
+          }
+          return next;
         });
-        await refreshHeroAiHistory();
-      } catch {
-        /* IndexedDB unavailable — hero still applies */
       }
+      void saveHeroAiToHistory({
+        dataUrl: finalUrl,
+        headlinePreview: heroCopy.headline,
+        format: generated.format,
+      })
+        .then(() => refreshHeroAiHistory())
+        .catch(() => {
+          /* history save optional */
+        });
     } else {
       setHeroAiError(result.message);
     }
-  }, [generated, v, includeVisual, openaiApiKey, draft.headline, draft.subhead, carouselSlideIndex, refreshHeroAiHistory]);
+    } finally {
+      setHeroAiLoading(false);
+    }
+  }, [
+    generated,
+    v,
+    includeVisual,
+    openaiApiKey,
+    draft.headline,
+    draft.subhead,
+    carouselSlideIndex,
+    refreshHeroAiHistory,
+    previewContent,
+    studioVersion,
+    v2Phase,
+    posterHeadlineLayout,
+  ]);
 
-  /** After headline-driven `generate()` boot, optionally kick off AI hero when the AI tab is active. */
+  const generateStaticHeroDeck = useCallback(async () => {
+    if (!generated || generated.format === 'carousel' || !includeVisual || !openaiApiKey.trim()) {
+      return;
+    }
+    setHeroAiError(null);
+    setStaticHeroDeckLoading(true);
+    try {
+      const src = studioVersion === 'v2' && v2Phase === 'editing' ? previewContent : generated.content;
+      const copyStrip = buildCopyVisualStrip(src, posterHeadlineLayout);
+      const base = copyStrip[0];
+      if (!base) {
+        setHeroAiError('No copy variation to brief the hero model.');
+        return;
+      }
+      const layouts = buildLayoutAccentStrip(base);
+      const layout0 = layouts[0];
+      if (!layout0) {
+        setHeroAiError('No layout variation to brief the hero model.');
+        return;
+      }
+      const merged = mergeCopyAndLayoutVariation(base, layout0);
+      const headline = merged.headlineLines.filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+      const heroCopy: PosterContent = {
+        ...generated.content,
+        headline: headline || generated.content.headline,
+        subhead: (merged.displaySubhead ?? generated.content.subhead).trim(),
+        overline: (merged.displayOverline ?? generated.content.overline).trim(),
+      };
+      const prompt = buildHeroImagePrompt(heroCopy, merged, generated.theme);
+      const result = await generateOpenAiHeroImage({
+        prompt,
+        format: generated.format,
+        apiKey: openaiApiKey,
+      });
+      const url = await finalizeHeroDataUrl(result);
+      if (url && result.ok) {
+        const n = copyStrip.length;
+        setStaticHeroImageMap((prev) => {
+          const next = { ...prev };
+          for (let ci = 0; ci < n; ci++) {
+            for (const st of STATIC_HERO_STYLES) {
+              next[staticHeroSlotKey(ci, st)] = url;
+            }
+          }
+          return next;
+        });
+        setHeroUiTab('ai');
+        setHeroShieldPreferred(false);
+        setHeroAiUrl(null);
+      } else {
+        setHeroAiError(
+          (!result.ok && result.message) || 'Could not generate or process the hero image.'
+        );
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setHeroAiError(msg);
+    } finally {
+      setStaticHeroDeckLoading(false);
+    }
+  }, [generated, includeVisual, openaiApiKey, previewContent, studioVersion, v2Phase, posterHeadlineLayout]);
+
+  /** After headline-driven `generate()` boot, optionally run AI hero(s) when the AI tab is active. */
   useEffect(() => {
     if (isBooting) {
       return undefined;
@@ -849,9 +1140,13 @@ function App({ user, onSignOut }: AppProps) {
     if (!includeVisual || heroUiTab !== 'ai' || !openaiApiKey.trim() || !generated) {
       return undefined;
     }
-    void generateOpenAiHero();
+    if (generated.format === 'carousel' && generated.carouselSlides?.length) {
+      void generateOpenAiHero();
+    } else if (generated.format !== 'carousel') {
+      void generateStaticHeroDeck();
+    }
     return undefined;
-  }, [isBooting, generated, includeVisual, heroUiTab, openaiApiKey, generateOpenAiHero]);
+  }, [isBooting, generated, includeVisual, heroUiTab, openaiApiKey, generateOpenAiHero, generateStaticHeroDeck]);
 
   const goCarouselSlide = useCallback(
     (i: number) => {
@@ -910,6 +1205,7 @@ function App({ user, onSignOut }: AppProps) {
     setV2FromPromptLoading(true);
     if (format === 'carousel') {
       setHeroAiUrl(null);
+      setStaticHeroImageMap({});
       setHeroShieldPreferred(true);
       const result = await generateCarouselFromPrompt({
         apiKey: openaiApiKey,
@@ -940,8 +1236,7 @@ function App({ user, onSignOut }: AppProps) {
         const campaignBrief = v2UserPrompt.trim();
         const plan = result.plan;
         try {
-          for (let i = 0; i < slides.length; i++) {
-            setCarouselHeroGenIndex(i);
+          await mapWithConcurrency(slides, CAROUSEL_HERO_GEN_CONCURRENCY, async (_, i) => {
             const ps = plan[i]!;
             const prompt = buildCarouselSlideHeroImagePrompt({
               theme,
@@ -976,10 +1271,10 @@ function App({ user, onSignOut }: AppProps) {
                 setHeroAiUrl(finalUrl);
               }
             }
-          }
+            return finalUrl;
+          });
         } finally {
           setCarouselHeroBusy(false);
-          setCarouselHeroGenIndex(null);
         }
       }
     } else {
@@ -1009,9 +1304,11 @@ function App({ user, onSignOut }: AppProps) {
     setV2ShowCopyEditor(false);
     if (format !== 'carousel') {
       setHeroAiUrl(null);
+      setStaticHeroImageMap({});
       setHeroShieldPreferred(true);
     } else if (!includeVisual || !openaiApiKey.trim() || heroUiTab !== 'ai') {
       setHeroAiUrl(null);
+      setStaticHeroImageMap({});
       setHeroShieldPreferred(true);
     }
     // carousel + visuals + API key: hero loop already set shield off and hero URL; do not reset here
@@ -1034,7 +1331,12 @@ function App({ user, onSignOut }: AppProps) {
     generate();
   }, [v2PrimaryUsesPromptPipeline, generateFromV2Prompt, generate]);
 
-  const caption = useMemo(() => buildLinkedInCaption(previewContent), [previewContent]);
+  const caption = useMemo(() => {
+    if (!generated) {
+      return '';
+    }
+    return buildLinkedInCaption(previewContent);
+  }, [generated, previewContent]);
   const generatedFmt = generated ? LINKEDIN_FORMATS[generated.format] : null;
 
   const runPosterExport = useCallback(
@@ -1529,7 +1831,26 @@ function App({ user, onSignOut }: AppProps) {
               V2
             </button>
           </div>
-          <div className="app-header__profile-cluster" ref={profileClusterRef}>
+          <div className="app-header__tail">
+            <div className="shell-theme-toggle" role="group" aria-label="Studio appearance">
+              <button
+                type="button"
+                className={`shell-theme-toggle__btn${shellTheme === 'dark' ? ' is-active' : ''}`}
+                aria-pressed={shellTheme === 'dark'}
+                onClick={() => setShellTheme('dark')}
+              >
+                Dark
+              </button>
+              <button
+                type="button"
+                className={`shell-theme-toggle__btn${shellTheme === 'light' ? ' is-active' : ''}`}
+                aria-pressed={shellTheme === 'light'}
+                onClick={() => setShellTheme('light')}
+              >
+                Light
+              </button>
+            </div>
+            <div className="app-header__profile-cluster" ref={profileClusterRef}>
             {user ? (
               <>
                 <button
@@ -1540,12 +1861,23 @@ function App({ user, onSignOut }: AppProps) {
                   title={user.email}
                   onClick={() => setProfileMenuOpen((o) => !o)}
                 >
-                  <span className="app-header__user-avatar app-header__user-avatar--placeholder" aria-hidden>
-                    {displayInitial(user.name, user.email)}
-                  </span>
-                  <span className="app-header__user-name">
-                    {displayFirstName(user.name) || user.email || 'Signed in'}
-                  </span>
+                  {user.kind === 'google' && user.picture ? (
+                    <img
+                      className="app-header__user-avatar"
+                      src={user.picture}
+                      alt=""
+                      decoding="async"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <span
+                      className="app-header__user-avatar app-header__user-avatar--placeholder"
+                      aria-hidden
+                    >
+                      {displayInitialFromUser(user)}
+                    </span>
+                  )}
+                  <span className="app-header__user-name">{displayShortNameFromUser(user)}</span>
                 </button>
                 {profileMenuOpen ? (
                   <div className="app-header__profile-menu" role="menu">
@@ -1565,6 +1897,7 @@ function App({ user, onSignOut }: AppProps) {
               </>
             ) : null}
           </div>
+          </div>
         </div>
       </header>
 
@@ -1575,7 +1908,6 @@ function App({ user, onSignOut }: AppProps) {
             <h2 id="section-style" className="panel-group__title">
               Style
             </h2>
-            <p className="panel-section__hint">Format and colour mode for every creative option.</p>
             <div className="field field--spaced field--compact">
               <span className="field-label">Format</span>
               <select
@@ -1599,7 +1931,6 @@ function App({ user, onSignOut }: AppProps) {
                     </option>
                   ))}
               </select>
-              <small>{LINKEDIN_FORMATS[format].hint}</small>
             </div>
             <div className="field field--spaced field--compact">
               <span className="field-label">Theme</span>
@@ -1612,7 +1943,6 @@ function App({ user, onSignOut }: AppProps) {
                 <option value="dark">Dark creative</option>
                 <option value="light">Light creative</option>
               </select>
-              <small>Light theme uses a dark-ink logo for contrast.</small>
             </div>
           </section>
 
@@ -1647,20 +1977,6 @@ function App({ user, onSignOut }: AppProps) {
             ) : null}
             {studioVersion === 'v2' ? (
               <>
-                {!generated ? (
-                  <p className="panel-section__hint">
-                    {format === 'carousel'
-                      ? 'Describe your campaign—we build a structured carousel plan (story beats + distinct art direction per slide), then map copy to the poster and generate one hero image per slide. 1080×1080 per slide; you choose slide count (2–7). Four layout options apply to the slide you are editing.'
-                      : 'Describe your campaign in one prompt—we will generate poster copy and four layout options.'}
-                  </p>
-                ) : v2ShowCopyEditor ? (
-                  <p className="panel-section__hint">What appears on your LinkedIn creative and caption.</p>
-                ) : (
-                  <p className="panel-section__hint">
-                    Your brief stays below—run <strong>Generate</strong> again to refresh copy. Use the field editor
-                    (pencil, top-right) when you need to tweak lines; previews update live.
-                  </p>
-                )}
                 <div className="field field--compact">
                   <label htmlFor="v2-prompt">Campaign prompt</label>
                   <textarea
@@ -1672,10 +1988,6 @@ function App({ user, onSignOut }: AppProps) {
                     placeholder="e.g. Launch ACKO motor floater for SMB fleets in NCR—confident, data-led, CFO-friendly."
                     disabled={v2FromPromptLoading}
                   />
-                  <small>
-                    Uses OpenAI (same API key as image generation). <strong>Generate</strong> updates the studio; open
-                    the field editor from the pencil when you need line-level edits.
-                  </small>
                 </div>
                 {format === 'carousel' ? (
                   <div className="field field--compact">
@@ -1698,16 +2010,7 @@ function App({ user, onSignOut }: AppProps) {
                       }}
                       disabled={v2FromPromptLoading}
                     />
-                    <small>
-                      Between {CAROUSEL_SLIDE_COUNT.min} and {CAROUSEL_SLIDE_COUNT.max} slides (1080×1080 each).
-                    </small>
                   </div>
-                ) : null}
-                {!openaiApiKey.trim() ? (
-                  <small>
-                    Add <code>VITE_OPENAI_API_KEY</code> to <code>.env.local</code>, then restart{' '}
-                    <code>npm run dev</code>.
-                  </small>
                 ) : null}
                 {v2FromPromptError ? (
                   <p className="login-form__err" style={{ marginTop: 8 }}>
@@ -1781,7 +2084,6 @@ function App({ user, onSignOut }: AppProps) {
                         onChange={(e) => setDraft((c) => ({ ...c, hashtags: e.target.value }))}
                         placeholder="ACKO, B2B, Insurance"
                       />
-                      <small>Comma or space separated.</small>
                     </div>
 
                     {generated &&
@@ -1795,10 +2097,6 @@ function App({ user, onSignOut }: AppProps) {
                         >
                           Update copy
                         </button>
-                        <small>
-                          Applies headline and subhead to poster option {ncCopyIdx + 1} only; shared fields
-                          (overline, CTA, footer, hashtags) update on the document.
-                        </small>
                       </div>
                     ) : null}
 
@@ -1833,6 +2131,7 @@ function App({ user, onSignOut }: AppProps) {
                           setHeroLibrary('default');
                           setHeroUiTab('default');
                           setHeroAiUrl(null);
+                          setStaticHeroImageMap({});
                           setHeroAiError(null);
                           setHeroShieldPreferred(true);
                         }}
@@ -1845,7 +2144,6 @@ function App({ user, onSignOut }: AppProps) {
               </>
             ) : (
               <>
-                <p className="panel-section__hint">What appears on your LinkedIn creative and caption.</p>
                 <div className="field field--compact">
                   <label htmlFor="overline">Overline</label>
                   <input
@@ -1911,7 +2209,6 @@ function App({ user, onSignOut }: AppProps) {
                     onChange={(e) => setDraft((c) => ({ ...c, hashtags: e.target.value }))}
                     placeholder="ACKO, B2B, Insurance"
                   />
-                  <small>Comma or space separated.</small>
                 </div>
               </>
             )}
@@ -1936,9 +2233,6 @@ function App({ user, onSignOut }: AppProps) {
                 <span className="visuals-toggle__label">{includeVisual ? 'On' : 'Off'}</span>
               </button>
             </div>
-            <p className="panel-section__hint">
-              One hero at a time: built-in shield, a library still, or an AI-generated image for the poster column.
-            </p>
 
             {includeVisual ? (
               <div className="hero-source-panel" aria-labelledby="hero-artwork-label">
@@ -1978,36 +2272,19 @@ function App({ user, onSignOut }: AppProps) {
                   {heroStatusLabel}
                 </p>
 
-                {heroAiUrl ? (
+                {heroAiThumbPreviewUrl ? (
                   <div className="hero-ai-saved-row">
                     <div
                       className={`hero-ai-saved-row__thumb-wrap${heroImageLoading ? ' hero-ai-saved-row__thumb-wrap--shimmer' : ''}`}
                       aria-hidden
                     >
-                      <img src={heroAiUrl} alt="" className="hero-ai-saved-row__thumb" decoding="async" />
+                      <img src={heroAiThumbPreviewUrl} alt="" className="hero-ai-saved-row__thumb" decoding="async" />
                     </div>
-                    <p className="hero-ai-saved-row__caption">
-                      Saved AI visual — open the <strong>AI</strong> tab to put it on the poster again. Library picks stay
-                      on the poster until you switch back.
-                    </p>
-                  </div>
-                ) : null}
-
-                {heroUiTab === 'default' ? (
-                  <div className="hero-source-body">
-                    <p className="panel-section__hint" style={{ marginTop: 0 }}>
-                      {heroAiUrl
-                        ? 'Built-in shield is shown on the poster while this tab is active. Your AI image is kept above — open AI to apply it.'
-                        : 'Uses the built-in shield motif in the hero column. No raster file is loaded.'}
-                    </p>
                   </div>
                 ) : null}
 
                 {heroUiTab === 'library' ? (
                   <div className="hero-source-body">
-                    <p className="panel-section__hint" style={{ marginTop: 0 }}>
-                      Choose a campaign illustration from the ACKO library.
-                    </p>
                     <div className="hero-visual-picker hero-visual-picker--library-only" role="radiogroup">
                       {HERO_LIBRARY_ENTRIES.map((entry) => (
                         <label
@@ -2039,9 +2316,6 @@ function App({ user, onSignOut }: AppProps) {
 
                 {heroUiTab === 'ai' ? (
                   <div className="hero-source-body">
-                    <p className="panel-section__hint" style={{ marginTop: 0 }}>
-                      GPT Image uses your headline and subhead as a visual brief only (no poster text in the image).
-                    </p>
                     {heroImageLoading ? (
                       <div
                         className="hero-ai-slot-preview hero-ai-slot-preview--shimmer"
@@ -2066,27 +2340,34 @@ function App({ user, onSignOut }: AppProps) {
                       >
                         {heroAiLoading || carouselHeroBusy ? 'Generating…' : 'Generate AI visual'}
                       </button>
-                      {heroAiUrl ? (
+                      {showClearAiVisual ? (
                         <button
                           type="button"
                           className="btn btn-cyber-ghost btn--compact"
                           onClick={() => {
-                            setHeroAiUrl(null);
+                            if (g?.format === 'carousel' && g.carouselSlides?.length) {
+                              setHeroAiUrl(null);
+                              setHeroAiError(null);
+                              setHeroShieldPreferred(true);
+                              setHeroUiTab('ai');
+                              setGenerated((prev) => {
+                                if (!prev || prev.format !== 'carousel' || !prev.carouselSlides?.length) {
+                                  return prev;
+                                }
+                                const idx = carouselSlideIndexRef.current;
+                                const nextUrls = [...(prev.carouselHeroUrls ?? prev.carouselSlides.map(() => null))];
+                                while (nextUrls.length < prev.carouselSlides.length) {
+                                  nextUrls.push(null);
+                                }
+                                nextUrls[idx] = null;
+                                return { ...prev, carouselHeroUrls: nextUrls };
+                              });
+                              return;
+                            }
                             setHeroAiError(null);
                             setHeroShieldPreferred(true);
                             setHeroUiTab('ai');
-                            setGenerated((prev) => {
-                              if (!prev || prev.format !== 'carousel' || !prev.carouselSlides?.length) {
-                                return prev;
-                              }
-                              const idx = carouselSlideIndexRef.current;
-                              const nextUrls = [...(prev.carouselHeroUrls ?? prev.carouselSlides.map(() => null))];
-                              while (nextUrls.length < prev.carouselSlides.length) {
-                                nextUrls.push(null);
-                              }
-                              nextUrls[idx] = null;
-                              return { ...prev, carouselHeroUrls: nextUrls };
-                            });
+                            setStaticHeroImageMap({});
                           }}
                           disabled={heroAiLoading || carouselHeroBusy}
                         >
@@ -2094,18 +2375,6 @@ function App({ user, onSignOut }: AppProps) {
                         </button>
                       ) : null}
                     </div>
-                    {!openaiApiKey ? (
-                      <small>
-                        Add <code>VITE_OPENAI_API_KEY</code> to <code>.env.local</code>, then restart{' '}
-                        <code>npm run dev</code>. Key is bundled for local use only.
-                      </small>
-                    ) : (
-                      <small>
-                        Uses <strong>GPT Image 1</strong> (<code>gpt-image-1</code>): transparent PNG hero (no
-                        photoreal people) composited on the poster. Recent images are stored in this browser
-                        (IndexedDB).
-                      </small>
-                    )}
                     {heroAiError ? (
                       <p className="login-form__err" style={{ marginTop: 8 }}>
                         {heroAiError}
@@ -2153,12 +2422,7 @@ function App({ user, onSignOut }: AppProps) {
                   </div>
                 ) : null}
               </div>
-            ) : (
-              <p className="panel-section__hint visuals-off-hint">
-                Hero column is hidden — text-only layout. Turn <strong>Visuals</strong> on to pick shield, library, or
-                AI artwork.
-              </p>
-            )}
+            ) : null}
           </section>
         </div>
 
@@ -2173,29 +2437,6 @@ function App({ user, onSignOut }: AppProps) {
             <span className="btn-cyber-generate__glow" aria-hidden />
             <span className="btn-cyber-generate__text">{footerPrimaryLabel}</span>
           </button>
-          {!canGenerate ? (
-            <p className="panel-footer__hint">
-              {v2PrimaryUsesPromptPipeline ? (
-                <>
-                  Add a campaign brief
-                  {!openaiApiKey.trim() ? ' and set your OpenAI API key' : null}
-                  {format === 'carousel'
-                    ? ` (${carouselSlideCount} slides).`
-                    : '.'}
-                </>
-              ) : (
-                'Add a headline to generate creatives.'
-              )}
-            </p>
-          ) : footerPrimaryBusy ? (
-            <p className="panel-footer__hint">
-              {v2PrimaryUsesPromptPipeline && v2FromPromptLoading
-                ? 'Calling the model for your campaign copy…'
-                : v2PrimaryUsesPromptPipeline && carouselHeroBusy
-                  ? 'Rendering hero artwork for each slide — this can take a minute.'
-                  : 'Hang tight—we&apos;re building your creative options.'}
-            </p>
-          ) : null}
         </div>
       </aside>
 
@@ -2219,10 +2460,6 @@ function App({ user, onSignOut }: AppProps) {
                       <h2 id="workspace-poster-options-title" className="section-title">
                         Poster options
                       </h2>
-                      <p className="subtle section-desc">
-                        Generated slides for this carousel—tap a slide to edit it or open the preview. Use
-                        Download carousel for PDF, zipped PNGs, or individual files.
-                      </p>
                     </div>
                     <div className="workspace-carousel-download" ref={workspaceCarouselDownloadRef}>
                       <button
@@ -2294,8 +2531,7 @@ function App({ user, onSignOut }: AppProps) {
                         const slideVars = buildVariations(slideContent);
                         const vv = slideVars[Math.min(selected, slideVars.length - 1)]!;
                         const heroUrl = heroUrlForExportSlide(idx);
-                        const slideHeroBusy =
-                          Boolean(g.includeVisual && carouselHeroBusy && carouselHeroGenIndex === idx && !heroUrl);
+                        const slideHeroBusy = Boolean(g.includeVisual && carouselHeroBusy && !heroUrl);
                         return (
                           <button
                             key={`ws-car-${idx}`}
@@ -2314,7 +2550,14 @@ function App({ user, onSignOut }: AppProps) {
                             <span className="workspace-carousel-story__badge" aria-hidden>
                               {idx + 1} / {g.carouselSlides!.length}
                             </span>
-                            <div className="workspace-carousel-story__frame">
+                            <div
+                              className={`workspace-carousel-story__frame${
+                                workspaceCopyGenerating ? ' workspace-carousel-story__frame--busy' : ''
+                              }`}
+                            >
+                              {workspaceCopyGenerating ? (
+                                <div className="variation-card__thumb-shimmer" aria-hidden />
+                              ) : null}
                               <ScaledPreview format="carousel" maxWidth={228} posterTheme={g.theme}>
                                 <PosterCard
                                   format="carousel"
@@ -2329,14 +2572,8 @@ function App({ user, onSignOut }: AppProps) {
                                   slidePager={{ current: idx + 1, total: g.carouselSlides!.length }}
                                 />
                               </ScaledPreview>
+                              <ThumbViewCta />
                             </div>
-                            {slideContent.overline.trim() ? (
-                              <p className="workspace-carousel-story__overline">{slideContent.overline.trim()}</p>
-                            ) : null}
-                            <p className="workspace-carousel-story__headline">{slideContent.headline.trim()}</p>
-                            {slideContent.subhead.trim() ? (
-                              <p className="workspace-carousel-story__subhead">{slideContent.subhead.trim()}</p>
-                            ) : null}
                           </button>
                         );
                       })}
@@ -2346,63 +2583,49 @@ function App({ user, onSignOut }: AppProps) {
               ) : null}
 
               {isCarouselDoc && g ? (
-                <>
-                  <h2
-                    id="workspace-options-title"
-                    className="section-title section-title--after-carousel"
-                  >
-                    Design options
-                  </h2>
-                  <p className="subtle section-desc section-desc--after-carousel">
-                    Tap any slide to open the preview. Use the row below to pick an accent — it applies to every
-                    slide in the carousel.
-                  </p>
-                </>
+                <h2
+                  id="workspace-options-title"
+                  className="section-title section-title--after-carousel"
+                >
+                  Design options
+                </h2>
               ) : !g ? (
-                <>
-                  <h2 id="workspace-options-title" className="section-title">
-                    Creative workspace
-                  </h2>
-                  <p className="subtle section-desc">
-                    {v2PrimaryUsesPromptPipeline
-                      ? 'Generate from your campaign prompt in the footer, then pick a creative here.'
-                      : 'Generate creatives from the left panel when your headline is ready.'}
-                  </p>
-                </>
+                <h2 id="workspace-options-title" className="section-title">
+                  Creative workspace
+                </h2>
               ) : null}
 
-              {!g && !workspacePreviewGenerating ? (
+              {!g && !workspaceCopyGenerating ? (
                 <div className="empty-state" role="status">
                   <div className="empty-state__frame">
                     <p className="empty-state__line1">Ready when you are</p>
-                    <p className="empty-state__line2">
-                      Add your content and generate creative options.
-                    </p>
-                    <p className="empty-state__line3">
-                      We&apos;ll create multiple LinkedIn-ready visuals for your campaign.
-                    </p>
                   </div>
                 </div>
               ) : null}
 
-              {!g && workspacePreviewGenerating ? (
+              {!g && workspaceCopyGenerating ? (
                 <div
-                  className="workspace-preview-generating workspace-preview-generating--solo"
+                  className="workspace-poster-options-band workspace-poster-options-band--generating"
                   aria-busy
-                  aria-label="Generating previews"
+                  aria-label="Generating copy and previews"
                 >
-                  <div className="workspace-preview-generating__shimmer" />
-                  <div className="workspace-preview-generating__row">
-                    {[0, 1, 2, 3].map((i) => (
-                      <div key={i} className="workspace-preview-generating__card" aria-hidden>
-                        <div className="workspace-preview-generating__card-inner">
-                          <div className="workspace-preview-generating__line workspace-preview-generating__line--w40" />
-                          <div className="workspace-preview-generating__line workspace-preview-generating__line--w90" />
-                          <div className="workspace-preview-generating__line workspace-preview-generating__line--w70" />
-                          <div className="workspace-preview-generating__block" />
+                  <div className="workspace-poster-options-grid">
+                    {[0, 1, 2, 3].map((i) => {
+                      const fmt = LINKEDIN_FORMATS[format];
+                      return (
+                        <div
+                          key={i}
+                          className="workspace-poster-options-cell workspace-poster-options-cell--busy"
+                          style={{ aspectRatio: `${fmt.width} / ${fmt.height}` }}
+                          aria-hidden
+                        >
+                          <div
+                            className="variation-card__thumb-shimmer"
+                            style={{ animationDelay: `${i * 0.18}s` }}
+                          />
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               ) : null}
@@ -2427,7 +2650,11 @@ function App({ user, onSignOut }: AppProps) {
                         >
                           <div className="variation-card__thumb-wrap">
                             {workspaceCarouselLayoutBusy ? (
-                              <div className="variation-card__thumb-shimmer" aria-hidden />
+                              <div
+                                className="variation-card__thumb-shimmer"
+                                style={{ animationDelay: `${index * 0.18}s` }}
+                                aria-hidden
+                              />
                             ) : null}
                             {index === 0 ? (
                               <span className="variation-card__badge-rec variation-badge" aria-label="Recommended layout">
@@ -2440,7 +2667,7 @@ function App({ user, onSignOut }: AppProps) {
                               onClick={() => {
                                 setSelected(index);
                               }}
-                              aria-label={`Apply ${variation.creativeName ?? `option ${index + 1}`} to all slides`}
+                              aria-label={`Select layout ${variation.creativeName ?? `option ${index + 1}`}`}
                             >
                               <ScaledPreview
                                 format={posterFormat}
@@ -2453,8 +2680,8 @@ function App({ user, onSignOut }: AppProps) {
                                   content={previewContent}
                                   variation={variation}
                                   includeVisual={g.includeVisual}
-                                  heroImageUrl={resolvedHeroImageUrl}
-                                  heroImageLoading={heroImageLoading}
+                                  heroImageUrl={heroUrlForExportSlide(carouselSlideIndex)}
+                                  heroImageLoading={false}
                                   heroImageObjectFit={resolvedHeroImageObjectFit}
                                   heroMatchPosterBackdrop={heroMatchPosterBackdrop}
                                   slidePager={carouselSlidePager}
@@ -2471,11 +2698,6 @@ function App({ user, onSignOut }: AppProps) {
                     <h2 id="workspace-poster-options-title" className="section-title">
                       Poster options
                     </h2>
-                    <p className="subtle section-desc">
-                      Four copy routes rendered with your selected design—click a card to make it active and open
-                      the zoomed preview. Arrow keys move between copy options when the poster row is focused.
-                      Adjust backgrounds and accents in Design options below.
-                    </p>
                     <div className="workspace-poster-options-band">
                       <div
                         ref={posterOptionsGridRef}
@@ -2494,13 +2716,17 @@ function App({ user, onSignOut }: AppProps) {
                             <div
                               key={`po-${copyV.id}`}
                               className={`workspace-poster-options-cell${ncCopyIdx === index ? ' is-selected' : ''}${
-                                workspacePreviewGenerating ? ' workspace-poster-options-cell--busy' : ''
+                                workspaceCopyGenerating ? ' workspace-poster-options-cell--busy' : ''
                               }`}
                               style={{ aspectRatio: `${fmt.width} / ${fmt.height}` }}
                               role="listitem"
                             >
-                              {workspacePreviewGenerating ? (
-                                <div className="variation-card__thumb-shimmer" aria-hidden />
+                              {workspaceCopyGenerating ? (
+                                <div
+                                  className="variation-card__thumb-shimmer"
+                                  style={{ animationDelay: `${index * 0.2}s` }}
+                                  aria-hidden
+                                />
                               ) : null}
                               <button
                                 type="button"
@@ -2509,7 +2735,7 @@ function App({ user, onSignOut }: AppProps) {
                                   setNcCopyIdx(index);
                                   setLightbox(index);
                                 }}
-                                aria-label={`Preview copy option ${copyV.creativeName ?? `option ${index + 1}`}`}
+                                aria-label={`View poster option ${copyV.creativeName ?? `option ${index + 1}`}`}
                               >
                                 <ScaledPreview
                                   format={posterFormat}
@@ -2517,19 +2743,20 @@ function App({ user, onSignOut }: AppProps) {
                                   posterTheme={posterTheme}
                                   maxWidth={720}
                                 >
-                                  <PosterCard
-                                    format={posterFormat}
-                                    theme={posterTheme}
-                                    content={previewContent}
-                                    variation={posterOptV}
-                                    includeVisual={g.includeVisual}
-                                    heroImageUrl={resolvedHeroImageUrl}
-                                    heroImageLoading={heroImageLoading}
+                                <PosterCard
+                                  format={posterFormat}
+                                  theme={posterTheme}
+                                  content={previewContent}
+                                  variation={posterOptV}
+                                  includeVisual={g.includeVisual}
+                                  heroImageUrl={staticAiHeroUrlForMerged(posterOptV, index)}
+                                  heroImageLoading={thumbHeroLoading(index, posterOptV)}
                                     heroImageObjectFit={resolvedHeroImageObjectFit}
                                     heroMatchPosterBackdrop={heroMatchPosterBackdrop}
                                     slidePager={carouselSlidePager}
                                   />
                                 </ScaledPreview>
+                                <ThumbViewCta />
                               </button>
                             </div>
                           );
@@ -2543,10 +2770,6 @@ function App({ user, onSignOut }: AppProps) {
                     >
                       Design options
                     </h2>
-                    <p className="subtle section-desc section-desc--after-carousel workspace-static-layout-desc">
-                      Background and accent recipes for your active copy route. The Poster options row updates when
-                      you pick a design. Arrow keys work when this row is focused.
-                    </p>
                     <div className="workspace-carousel-layout-shell workspace-static-layout-shell">
                       <div
                         ref={variationGridRef}
@@ -2566,13 +2789,17 @@ function App({ user, onSignOut }: AppProps) {
                           <div
                             key={layoutVar.id}
                             className={`variation-card${selected === index ? ' is-selected' : ''}${
-                              workspacePreviewGenerating ? ' variation-card--busy' : ''
+                              workspaceCopyGenerating ? ' variation-card--busy' : ''
                             }`}
                             role="listitem"
                           >
                             <div className="variation-card__thumb-wrap">
-                              {workspacePreviewGenerating ? (
-                                <div className="variation-card__thumb-shimmer" aria-hidden />
+                              {workspaceCopyGenerating ? (
+                                <div
+                                  className="variation-card__thumb-shimmer"
+                                  style={{ animationDelay: `${index * 0.2}s` }}
+                                  aria-hidden
+                                />
                               ) : null}
                               <button
                                 type="button"
@@ -2593,8 +2820,8 @@ function App({ user, onSignOut }: AppProps) {
                                     content={previewContent}
                                     variation={stripVariation}
                                     includeVisual={g.includeVisual}
-                                    heroImageUrl={resolvedHeroImageUrl}
-                                    heroImageLoading={heroImageLoading}
+                                    heroImageUrl={staticAiHeroUrlForMerged(stripVariation, ncCopyIdx)}
+                                    heroImageLoading={false}
                                     heroImageObjectFit={resolvedHeroImageObjectFit}
                                     heroMatchPosterBackdrop={heroMatchPosterBackdrop}
                                     slidePager={carouselSlidePager}
@@ -2666,8 +2893,8 @@ function App({ user, onSignOut }: AppProps) {
                   </div>
                 )}
               </header>
-              <p className="caption-text">{caption || '—'}</p>
-              {!exportReady ? (
+              <p className="caption-text">{caption}</p>
+              {g && !exportReady ? (
                 <p className="caption-block__hint" role="note">
                   Generate creatives to enable export from the preview (download PNG).
                 </p>
@@ -2817,7 +3044,7 @@ function App({ user, onSignOut }: AppProps) {
                     <span className="lightbox-nav-placeholder lightbox-nav-placeholder--carousel-edge" aria-hidden />
                   )}
                   <div className="lightbox-carousel-main-wrap">
-                    {g.includeVisual && carouselHeroBusy ? (
+                    {g.includeVisual && carouselHeroBusy && !resolvedHeroImageUrl ? (
                       <div className="lightbox-carousel-main-skeleton" aria-busy aria-label="Generating slide artwork">
                         <div className="lightbox-carousel-main-skeleton__shimmer" />
                       </div>
@@ -2907,55 +3134,47 @@ function App({ user, onSignOut }: AppProps) {
                   className="lightbox-carousel-slide-strip"
                   role="tablist"
                   aria-label="Carousel slides"
-                  aria-busy={g.includeVisual && carouselHeroBusy ? true : undefined}
+                  aria-busy={
+                    g.includeVisual && carouselHeroBusy && g.carouselHeroUrls?.some((u) => !u)
+                      ? true
+                      : undefined
+                  }
                 >
-                  {g.includeVisual && carouselHeroBusy
-                    ? g.carouselSlides.map((_, sidx) => (
-                        <div
-                          key={`lb-sk-thumb-${sidx}`}
-                          className="lightbox-carousel-slide-thumb lightbox-carousel-slide-thumb--skeleton"
-                          aria-hidden
-                        >
-                          <div className="lightbox-carousel-skeleton-panel__shimmer" />
-                        </div>
-                      ))
-                    : g.carouselSlides.map((slideContent, idx) => {
-                        const slideVars = buildVariations(slideContent);
-                        const vv = slideVars[Math.min(lightbox, slideVars.length - 1)]!;
-                        const heroUrl = heroUrlForExportSlide(idx);
-                        const slideHeroBusy = Boolean(
-                          g.includeVisual && carouselHeroBusy && carouselHeroGenIndex === idx && !heroUrl
-                        );
-                        return (
-                          <button
-                            key={`lb-slide-${idx}`}
-                            type="button"
-                            role="tab"
-                            data-lightbox-carousel-thumb={idx}
-                            aria-selected={carouselSlideIndex === idx}
-                            className={`lightbox-carousel-slide-thumb${
-                              carouselSlideIndex === idx ? ' is-active' : ''
-                            }`}
-                            onClick={() => goCarouselSlide(idx)}
-                            aria-label={`Slide ${idx + 1} of ${g.carouselSlides!.length}`}
-                          >
-                            <ScaledPreview format="carousel" maxWidth={96} posterTheme={g.theme}>
-                              <PosterCard
-                                format="carousel"
-                                theme={g.theme}
-                                content={slideContent}
-                                variation={vv}
-                                includeVisual={g.includeVisual}
-                                heroImageUrl={heroUrl}
-                                heroImageLoading={slideHeroBusy}
-                                heroImageObjectFit={resolvedHeroImageObjectFit}
-                                heroMatchPosterBackdrop={heroMatchPosterBackdrop}
-                                slidePager={{ current: idx + 1, total: g.carouselSlides!.length }}
-                              />
-                            </ScaledPreview>
-                          </button>
-                        );
-                      })}
+                  {g.carouselSlides.map((slideContent, idx) => {
+                    const slideVars = buildVariations(slideContent);
+                    const vv = slideVars[Math.min(lightbox, slideVars.length - 1)]!;
+                    const heroUrl = heroUrlForExportSlide(idx);
+                    const slideHeroBusy = Boolean(g.includeVisual && carouselHeroBusy && !heroUrl);
+                    return (
+                      <button
+                        key={`lb-slide-${idx}`}
+                        type="button"
+                        role="tab"
+                        data-lightbox-carousel-thumb={idx}
+                        aria-selected={carouselSlideIndex === idx}
+                        className={`lightbox-carousel-slide-thumb${
+                          carouselSlideIndex === idx ? ' is-active' : ''
+                        }`}
+                        onClick={() => goCarouselSlide(idx)}
+                        aria-label={`Slide ${idx + 1} of ${g.carouselSlides!.length}`}
+                      >
+                        <ScaledPreview format="carousel" maxWidth={96} posterTheme={g.theme}>
+                          <PosterCard
+                            format="carousel"
+                            theme={g.theme}
+                            content={slideContent}
+                            variation={vv}
+                            includeVisual={g.includeVisual}
+                            heroImageUrl={heroUrl}
+                            heroImageLoading={slideHeroBusy}
+                            heroImageObjectFit={resolvedHeroImageObjectFit}
+                            heroMatchPosterBackdrop={heroMatchPosterBackdrop}
+                            slidePager={{ current: idx + 1, total: g.carouselSlides!.length }}
+                          />
+                        </ScaledPreview>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             ) : (
@@ -2986,7 +3205,11 @@ function App({ user, onSignOut }: AppProps) {
                         content={previewContent}
                         variation={lightboxPosterVariation}
                         includeVisual={g.includeVisual}
-                        heroImageUrl={resolvedHeroImageUrl}
+                        heroImageUrl={
+                          g.format === 'carousel' && g.carouselSlides?.length
+                            ? resolvedHeroImageUrl
+                            : staticAiHeroUrlForMerged(lightboxPosterVariation, lightbox ?? 0)
+                        }
                         heroImageLoading={heroImageLoading}
                         heroImageObjectFit={resolvedHeroImageObjectFit}
                         heroMatchPosterBackdrop={heroMatchPosterBackdrop}
@@ -3047,7 +3270,7 @@ function App({ user, onSignOut }: AppProps) {
                               content={previewContent}
                               variation={thumbPosterVariation}
                               includeVisual={g.includeVisual}
-                              heroImageUrl={resolvedHeroImageUrl}
+                              heroImageUrl={staticAiHeroUrlForMerged(thumbPosterVariation, index)}
                               heroImageLoading={heroImageLoading}
                               heroImageObjectFit={resolvedHeroImageObjectFit}
                               heroMatchPosterBackdrop={heroMatchPosterBackdrop}
@@ -3106,7 +3329,11 @@ function App({ user, onSignOut }: AppProps) {
             content={previewContent}
             variation={lightboxPosterVariation}
             includeVisual={g.includeVisual}
-            heroImageUrl={resolvedHeroImageUrl}
+            heroImageUrl={
+              g.format === 'carousel' && g.carouselSlides?.length
+                ? resolvedHeroImageUrl
+                : staticAiHeroUrlForMerged(lightboxPosterVariation, lightbox ?? 0)
+            }
             heroImageLoading={false}
             heroImageObjectFit={resolvedHeroImageObjectFit}
             heroMatchPosterBackdrop={heroMatchPosterBackdrop}

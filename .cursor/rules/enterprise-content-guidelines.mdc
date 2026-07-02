@@ -1,0 +1,21 @@
+---
+description: ACKO Enterprise copy rules for LinkedIn poster/carousel generation and any AI-written marketing copy in this app.
+alwaysApply: true
+globs: src/openaiStudioContent.ts,src/demoPresets.ts,src/buildVariations.ts
+---
+
+# Enterprise content guidelines (canonical)
+
+The **full** writing and evaluation spec lives in the repo at:
+
+`src/enterprise-content-guidelines.md`
+
+## Rules for agents and codegen
+
+1. **Do not duplicate** the full document in chat or in code comments — edit the single `src/enterprise-content-guidelines.md` file when the programme updates guidelines.
+2. **`openaiStudioContent.ts`** imports that file (as raw text) and appends it to the OpenAI **system** messages for:
+   - static poster copy (`generatePosterContentFromPrompt`)
+   - carousel plan copy (`generateCarouselFromPrompt` / `buildCarouselPlanSystem`)
+3. When changing poster JSON shape, headline/subhead limits, or tone rules, keep **this file**, **`src/enterprise-content-guidelines.md`**, and **`openaiStudioContent.ts`** aligned so runtime generation and Cursor guidance stay consistent.
+4. Prefer **outcome-led headlines**, **no B2B question headlines**, **no banned words** (hassle-free, seamless, world-class, holistic, leverage, synergy, “solution” as a vague noun), and **terminology** from section 7 of the markdown (e.g. group health insurance not “GMC” in external copy).
+5. **Visual** (hero images, carousel scenes): `src/enterprise-visual-guidelines.md` — see `.cursor/rules/enterprise-visual-guidelines.mdc`.

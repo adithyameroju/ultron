@@ -21,7 +21,7 @@ Export is captured at high resolution (see `App.tsx` `toPng` `pixelRatio`); the 
 
 - **Landscape and vertical (default):** 80px padding (scaled: `PAD_PX * t.s` in `PosterCard.tsx`)  
 - **Square 1:1:** tighter **58px** padding at design width (`PAD_PX_SQUARE`, scaled) so copy and hero fill the frame without large empty bands.  
-- **Two-column (with hero):** `LEFT_COL_FR` 60% text, `RIGHT_COL_FR` 40% one hero visual only — `HeroShieldVisual` (no extra illustrations, cards, or icon clutter).  
+- **Two-column (with hero):** `LEFT_COL_FR` 60% text, `RIGHT_COL_FR` 40% one hero visual only — `HeroShieldVisual` (no extra illustrations, cards, or icon clutter). AI hero **creative** rules: `src/enterprise-visual-guidelines.md`. **Design options** click behavior: `.cursor/rules/acko-design-options-interaction.mdc` (layout only — no preview popup).  
 - **Text-only (no hero):** copy block is centred horizontally with a max width `TEXT_ONLY_MAX_WIDTH` (~86%); type stays **left-aligned**.
 
 ## 1080×1080 (square) specifics
@@ -29,19 +29,19 @@ Export is captured at high resolution (see `App.tsx` `toPng` `pixelRatio`); the 
 - Use `squareStack` in `posterTextBlocks`: a single **stacked** block, vertically balanced with the right-column shield.  
 - With **hero on**, the text and shield sit in a shared **vertical band** (both columns get the same height, ~90% of the content area) so the pair is **optically centred** top to bottom, not only within each full-height column.  
 - Tune **headline** scale in `SQUARE` step in `posterTypography.ts` for balance with the 40% shield.  
-- Overline/CTA/hashtags: follow Euclid / `POSTER_FONTS`; CTA has accent **bar** treatment (`ctaBlock`).
+- Overline/CTA/hashtags: follow Euclid / `POSTER_FONTS`; CTA uses accent **chip** treatment (`ctaBlock`).
 
 ## Light / dark
 
 - `CreativeTheme` **dark** or **light** controls `premiumBackground` and text colours.  
-- **Logo** assets: `public/acko-for-business-on-dark.png` (dark creatives); `public/acko-for-business-on-light.jpg` (light creatives—full-colour wordmark on pale backgrounds).  
+- **Logo (strict):** follow **`.cursor/rules/acko-poster-logo-strict.mdc`** — locked paths, RGBA assets, `logoStyle`, and placement. Do not change logo properties in `PosterCard.tsx` without explicit user approval.  
 - Backgrounds: premium gradient + subtle pattern; no competing with the headline.
 
 ## Typography and content
 
-- **Headline** is dominant; **exactly four** wrapped lines at export headline size (line-break strategies from `buildVariations` + optional **all-caps** variant). **Do not** rely on CSS truncation or ellipsis—copy length must fit naturally in four lines.
+- **Headline** is dominant; **exactly four** wrapped lines at export headline size (line-break strategies from `buildVariations`). **Do not** rely on CSS truncation or ellipsis—copy length must fit naturally in four lines.
 - **Subhead** is **exactly two** lines at export subhead size—**no** third line, **no** multi-paragraph block (poster subtext is never “dozens of lines”), and **no** truncation/clamping as a substitute for editing copy.
-- For **all-caps** treatment, set `headlineAllCaps` on the variation; slightly wider tracking for legibility.
+- Headline is **sentence case** in the default four options (no dedicated all-caps channel). Optional `headlineAllCaps` on `Variation` remains for legacy/API only; default `buildVariations` must not set it.
 - CTA, footnote, and hashtags: smaller, secondary hierarchy.  
 - JSON/API DTOs for this product use **snake_case** when exposed from Java controllers; this React app is internal to the same programme—follow repo conventions.
 
@@ -55,7 +55,7 @@ Export is captured at high resolution (see `App.tsx` `toPng` `pixelRatio`); the 
 
 ## Variations
 
-- Four line-break / accent **channels** in `buildVariations.ts`, including an **all-caps headline** option that reuses a balanced 2-line split.  
+- Four line-break / accent **channels** in `buildVariations.ts` (no all-caps headline channel in the default set).  
 - Accents: crocus purple, picton, cerise (cycled).  
 
 ## Fonts

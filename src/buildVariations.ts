@@ -1,7 +1,15 @@
+import { fitHeadlineLinesConservative, fitHeadlineLinesForPoster, type PosterHeadlineLayout } from './headlineLineFit';
 import type { AccentId, HeadlineTreatment, PosterContent, PosterCopyRoute, Variation } from './posterTypes';
 import { ACCENTS } from './posterTypes';
 
 const MAX_HEADLINE_LINES = 4;
+
+function fitLines(lines: string[], layout?: PosterHeadlineLayout, allCaps?: boolean): string[] {
+  if (layout) {
+    return fitHeadlineLinesForPoster(lines, layout, { allCaps });
+  }
+  return fitHeadlineLinesConservative(lines, allCaps);
+}
 
 function wordsOf(headline: string): string[] {
   return headline.trim().split(/\s+/).filter(Boolean);
@@ -61,7 +69,7 @@ function variationCopy(
   content: PosterContent,
   index: number
 ): { displayOverline: string; displaySubhead: string; headlineTreatment: HeadlineTreatment } {
-  const baseOv = content.overline.trim() || 'Enterprise';
+  const baseOv = content.overline.trim();
   const sub = content.subhead.trim();
   const first = firstSentence(sub);
   const treatments: HeadlineTreatment[] = [
@@ -70,12 +78,8 @@ function variationCopy(
     'accentLastWordFirstLine',
     'underlineSecondLine',
   ];
-  const overlines = [
-    baseOv,
-    `${baseOv} · spotlight`,
-    'Commercial lens',
-    'Leadership decks',
-  ];
+  /** Only the brief/model overline; no fabricated “tag” lines per card. */
+  const displayOv = baseOv;
   /** Distinct subhead phrasing per poster option (length controlled at generation time). */
   const subheads = [
     sub,
@@ -84,15 +88,15 @@ function variationCopy(
     sub ? `${first}` : sub,
   ];
   return {
-    displayOverline: overlines[index % overlines.length]!,
+    displayOverline: displayOv,
     displaySubhead: subheads[index % subheads.length]!,
     headlineTreatment: treatments[index % treatments.length]!,
   };
 }
 
-export function buildVariations(content: PosterContent): Variation[] {
+export function buildVariations(content: PosterContent, layout?: PosterHeadlineLayout): Variation[] {
   const words = wordsOf(content.headline);
-  const balanced2 = capLines(splitTwoLines(words, 0.5), MAX_HEADLINE_LINES);
+  const balanced2 = fitLines(capLines(splitTwoLines(words, 0.5), MAX_HEADLINE_LINES), layout);
   const modes: Array<{
     lines: string[];
     label: string;
@@ -103,17 +107,16 @@ export function buildVariations(content: PosterContent): Variation[] {
       label: '2 lines · balanced',
     },
     {
-      lines: capLines(splitTwoLines(words, 0.38), MAX_HEADLINE_LINES),
+      lines: fitLines(capLines(splitTwoLines(words, 0.38), MAX_HEADLINE_LINES), layout),
       label: '2 lines · short / long',
     },
     {
-      lines: capLines(splitThreeLines(words), MAX_HEADLINE_LINES),
+      lines: fitLines(capLines(splitThreeLines(words), MAX_HEADLINE_LINES), layout),
       label: 'Up to 3 lines',
     },
     {
-      lines: balanced2,
-      label: '2 lines · ALL CAPS',
-      headlineAllCaps: true,
+      lines: fitLines(capLines(splitTwoLines(words, 0.62), MAX_HEADLINE_LINES), layout),
+      label: '2 lines · lead / tail',
     },
   ];
 
@@ -189,7 +192,7 @@ export function expandToFourCopyRoutes(content: PosterContent): PosterCopyRoute[
   }));
 }
 
-export function buildCopyVisualStrip(content: PosterContent): Variation[] {
+export function buildCopyVisualStrip(content: PosterContent, layout?: PosterHeadlineLayout): Variation[] {
   const routes = expandToFourCopyRoutes(content);
   return routes.map((route, i) => {
     const slice: PosterContent = {
@@ -198,7 +201,7 @@ export function buildCopyVisualStrip(content: PosterContent): Variation[] {
       subhead: route.subhead,
       copyRoutes: undefined,
     };
-    const v = buildVariations(slice)[i]!;
+    const v = buildVariations(slice, layout)[i]!;
     return {
       ...v,
       accent: STRIP_ACCENT,
@@ -208,15 +211,29 @@ export function buildCopyVisualStrip(content: PosterContent): Variation[] {
   });
 }
 
-/** Second strip: same copy as `base`, four accent + premium background recipes. */
+/** Second strip: same copy as `base`, four accent + canvas recipes with four distinct AI hero paths (non-carousel only). */
 export function buildLayoutAccentStrip(base: Variation): Variation[] {
   const accentOrder: AccentId[] = ['purple', 'cerise', 'picton', 'violet'];
+  const heroStyles: Array<'default' | 'defaultAlt' | 'stylizedIllustration' | 'photorealHuman'> = [
+    'default',
+    'defaultAlt',
+    'stylizedIllustration',
+    'photorealHuman',
+  ];
   return accentOrder.map((accent, i) => ({
     ...base,
     accent,
     backgroundStyleId: i % 8,
-    id: `layout-strip-${i}-${accent}`,
-    label: `${ACCENTS[accent].label} · canvas ${(i % 8) + 1}`,
+    heroVisualStyle: heroStyles[i],
+    id: `layout-strip-${i}-${accent}-${heroStyles[i]}`,
+    label:
+      heroStyles[i] === 'photorealHuman'
+        ? `${ACCENTS[accent].label} · photoreal hero`
+        : heroStyles[i] === 'stylizedIllustration'
+          ? `${ACCENTS[accent].label} · illustration hero`
+          : heroStyles[i] === 'defaultAlt'
+            ? `${ACCENTS[accent].label} · alt abstract hero`
+            : `${ACCENTS[accent].label} · canvas ${(i % 8) + 1}`,
     creativeName: ACCENTS[accent].label.split(' ')[0] ?? ACCENTS[accent].label,
   }));
 }
@@ -227,6 +244,7 @@ export function mergeCopyAndLayoutVariation(copyV: Variation, layoutV: Variation
     ...copyV,
     accent: layoutV.accent,
     backgroundStyleId: layoutV.backgroundStyleId,
+    heroVisualStyle: layoutV.heroVisualStyle ?? 'default',
     id: `${copyV.id}__${layoutV.id}`,
     label: `${copyV.creativeName ?? 'Creative'} · ${ACCENTS[layoutV.accent].label}`,
   };

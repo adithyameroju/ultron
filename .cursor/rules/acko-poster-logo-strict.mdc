@@ -1,0 +1,39 @@
+---
+description: Strict ACKO for Business poster logo assets and PosterCard rendering — do not change without explicit user approval.
+alwaysApply: true
+---
+
+# ACKO poster logo (strict — do not change)
+
+Applies to **exported LinkedIn art** in `PosterCard.tsx` only. Studio shell / Ultron chrome uses different assets.
+
+## Canonical assets (locked)
+
+| `CreativeTheme` | File (under `public/`) | Format |
+|-----------------|------------------------|--------|
+| **dark** | `acko-for-business-on-dark.png` | RGBA PNG — white wordmark, transparent pixels |
+| **light** | `acko-for-business-light-creative.png` | RGBA PNG — dark purple wordmark, transparent pixels |
+
+**Do not** substitute one for the other, rename paths in code without updating this rule, point light creative at JPEG/JPG, or use `acko-for-business-on-light.jpg` for export.
+
+## Do not change (unless the user explicitly asks)
+
+- **`LOGO_FOR_DARK_BG` / `LOGO_FOR_LIGHT_BG`** paths in `PosterCard.tsx`
+- **`posterLogoSrc(theme)`** mapping: `light` → light file only; `dark` → dark file only
+- **`logoStyle`** for light creative:
+  - `height` from scaled `logoH` (landscape ~`28 * t.s`, square/vertical ~`26 * t.s`)
+  - `width: 'auto'`, `objectFit: 'contain'`, `display: 'block'`
+  - Light-only filter: `drop-shadow(0 1px 2px rgba(46, 23, 115, 0.14))` — no white halo, no `background`, no `mix-blend-mode`, no opacity tricks that fake transparency
+- **Logo placement:** top-right inside poster padding (`right: pad`, `top: pad`); do not move logo into the hero column or centre the canvas
+- **Asset integrity:** do not re-export light logo as JPEG; do not bake solid black or white rectangles into the PNG; preserve alpha channel
+
+## Allowed without user approval
+
+- Replacing `public/acko-for-business-light-creative.png` or `public/acko-for-business-on-dark.png` with a **new brand file** that keeps the same rules (correct theme, true RGBA transparency, same approximate aspect ~1024×248)
+- Bug fixes that restore this spec when a regression breaks transparency or swaps assets
+
+## If asked to “fix” a black rectangle on light creative
+
+The fix is a **transparent RGBA source file**, not CSS masking, `mix-blend-mode`, or using the dark (white) wordmark on light backgrounds.
+
+See also: `.cursor/rules/acko-social-poster-layout.mdc` (full poster layout).

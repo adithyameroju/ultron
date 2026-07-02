@@ -5,9 +5,19 @@ import {
   synthesizeCarouselPlanFromPosterContents,
   type CarouselPlanSlide,
 } from './carouselPlan';
+import { normalizePosterCta, POSTER_CTA_MAX_CHARS } from './posterCopyClamp';
 import { clampCarouselSlideCount, type PosterContent, type PosterCopyRoute } from './posterTypes';
+import enterpriseContentGuidelines from './enterprise-content-guidelines.md?raw';
+import { ENTERPRISE_VISUAL_GUIDELINES_CAROUSEL_PLAN_BLOCK } from './enterpriseVisualGuidelines';
 
 const OPENAI_CHAT_PATH = '/v1/chat/completions';
+
+const ENTERPRISE_WRITING_GUIDELINES_BLOCK = `
+
+--- ACKO Enterprise — writing guidelines (mandatory for every headline, subhead, CTA, and body string you output) ---
+
+${enterpriseContentGuidelines}
+`;
 
 function openAiChatCompletionsUrl(): string {
   if (import.meta.env.DEV || import.meta.env.VITE_OPENAI_USE_DEV_PROXY === 'true') {
@@ -24,28 +34,29 @@ export type CarouselFromPromptResult =
   | { ok: true; plan: CarouselPlanSlide[]; slides: PosterContent[] }
   | { ok: false; message: string };
 
-const SYSTEM = `You are a B2B marketing copywriter for ACKO for Business (India) LinkedIn social creatives.
+const POSTER_COPY_SYSTEM = `You are a senior brand and B2B creative lead for ACKO for Business (India) LinkedIn social creatives—premium insuretech voice: clear, confident, human, never gimmicky.
 
 STRICT — apply on **every** JSON response (no exceptions):
-- **Headline** (root + every copy_routes row): must typeset to **exactly four** lines at large poster headline size. Not three, not five. No fifth wrap. **No** ellipsis, clipping, or UI truncation to hide overflow—write shorter copy if needed (~72–92 characters is usually safe; vary by word length).
-- **Subhead** (root + every copy_routes row): must typeset to **exactly two** lines of body copy at poster subhead size. **Not** one line of tiny type, **not** three+ lines, **not** multi-paragraph “wall” text (that is **not** dozens of lines on a poster). **No** truncation/clipping in UI—tighten wording (~118–155 characters including spaces; one or two sentences).
+- **Headline** (root + every copy_routes row): must **physically fit** at most **four** lines at large poster headline size (fewer lines is fine). **Never** a fifth line of wrapped text—the poster renders the full string with no hidden overflow; write shorter copy until it fits (~72–92 characters is usually safe; vary by word length).
+- **Subhead** (root + every copy_routes row): must **physically fit** at most **two** lines at poster subhead size (one strong line is fine). **Not** a wall of paragraphs—the poster shows full subhead text; tighten until it fits (~118–155 characters including spaces; one or two sentences).
+- **cta** (root field): **one short line only** — max **${POSTER_CTA_MAX_CHARS} characters** including spaces, single imperative phrase, **no** second sentence, **no** stacked clauses with semicolons. Verb-led (e.g. "Get a custom quote"). Same CTA may repeat across routes; it must stay within this cap.
 
 Return ONLY a single JSON object (no markdown fences, no commentary) with these exact string keys:
 overline, headline, subhead, cta, footnote, hashtags, copy_routes.
 
 Rules:
-- overline: short category line (e.g. Enterprise, Commercial insurance).
+- overline: optional short category line (e.g. Enterprise). Use **empty string ""** when the brief does not call for a tag line or category ribbon—do not invent filler.
 - headline: primary headline (plain language, no hashtags). Must match copy_routes[0].headline exactly.
 - subhead: primary subhead. Must match copy_routes[0].subhead exactly.
 - copy_routes: JSON array of **exactly four** objects, each { "headline": string, "subhead": string }.
   Each of the four rows is a **distinct copy angle** for the same campaign (different wording, not only line breaks).
-  Every row must satisfy the STRICT headline (4 lines) and subhead (2 lines) rules above.
+  Every row must satisfy the STRICT headline (≤4 lines) and subhead (≤2 lines) rules above.
   No hashtags in headline or subhead fields.
-- cta: one clear call to action (e.g. Talk to us about ACKO for Business).
+- cta: one short call to action obeying the **cta** STRICT rule above (max ${POSTER_CTA_MAX_CHARS} characters).
 - footnote: short legal-style line (e.g. Issued by ACKO. T&C apply.).
 - hashtags: comma-separated topic tags suitable for LinkedIn (e.g. ACKO, Insurance, B2B).
 
-Do not include JSON inside markdown code blocks. Output raw JSON only.`;
+Do not include JSON inside markdown code blocks. Output raw JSON only.${ENTERPRISE_WRITING_GUIDELINES_BLOCK}`;
 
 function stripJsonFences(text: string): string {
   const t = text.trim();
@@ -93,10 +104,10 @@ function normalizeContent(raw: Record<string, unknown>): PosterContent | null {
         : undefined;
 
   return {
-    overline: str('overline') || 'Enterprise',
+    overline: str('overline'),
     headline,
     subhead,
-    cta: str('cta') || 'Talk to us about ACKO for Business',
+    cta: normalizePosterCta(str('cta') || 'Talk to us about ACKO for Business'),
     footnote: str('footnote') || 'Issued by ACKO. T&C apply.',
     hashtags: str('hashtags') || 'ACKO, Insurance, B2B',
     copyRoutes,
@@ -104,7 +115,7 @@ function normalizeContent(raw: Record<string, unknown>): PosterContent | null {
 }
 
 /**
- * Uses OpenAI Chat Completions (JSON). Same key as GPT Image / DALL·E: VITE_OPENAI_API_KEY.
+ * Uses OpenAI Chat Completions (JSON). Same API key as hero image generation in the app.
  * Dev uses Vite proxy /api/openai → api.openai.com (see vite.config.ts).
  */
 export async function generatePosterContentFromPrompt(args: {
@@ -115,8 +126,7 @@ export async function generatePosterContentFromPrompt(args: {
   if (!key) {
     return {
       ok: false,
-      message:
-        'Missing OpenAI API key. Set VITE_OPENAI_API_KEY in .env.local and restart npm run dev.',
+      message: 'Missing API key. Add it in your local environment for this project and restart the dev server.',
     };
   }
   const prompt = args.userPrompt.trim();
@@ -136,7 +146,7 @@ export async function generatePosterContentFromPrompt(args: {
         temperature: 0.7,
         response_format: { type: 'json_object' },
         messages: [
-          { role: 'system', content: SYSTEM },
+          { role: 'system', content: POSTER_COPY_SYSTEM },
           {
             role: 'user',
             content: `Campaign brief / prompt:\n${prompt.slice(0, 8000)}`,
@@ -204,20 +214,20 @@ Return ONLY a single JSON object (no markdown fences, no commentary) with this e
 The root object MUST use the key **plan** (not "slides"). Each object in "plan" MUST include these string keys:
 - slide: integer 1..${slideCount} in order (row 1 has slide 1, … row ${slideCount} has slide ${slideCount})
 - role: must be exactly one of: ${roleList} — in this order for rows 1..${slideCount}: ${flow}
-- headline: main poster headline for this narrative beat (no hashtags). Must typeset to **exactly four** lines on the 1080×1080 carousel card at headline size—no fifth line, **no** UI truncation. **Hard max ~52 characters** (including spaces) so wrapping stays predictable; one tight phrase or two very short clauses max.
-- copy: supporting body for this slide (becomes poster subhead). Must typeset to **exactly two** lines at subhead size—**no** third line, **no** paragraph wall, **no** UI truncation. **Hard max ~110 characters** (including spaces). One or two very short sentences only; no bullet characters.
-- visual_direction: concrete **scene** for an illustrator—subjects, metaphors, setting. NO typography, NO logos, NO UI strings, NO letters. Must be **meaningfully different** on every slide: different focal object, metaphor, and environment—not the same scene with palette tweaks.
-- composition: framing for **this slide only** (e.g. "asymmetrical, visual weight bottom-left", "centered single focal object with wide negative space"). Must **vary** across slides—do not repeat the same layout pattern.
-- overline: short category line (e.g. Enterprise)
-- cta: one line; the **last** row (slide ${slideCount}, role cta) must carry the strongest, most concrete action
+- headline: main poster headline for this narrative beat (no hashtags). Must **physically fit** at most **four** lines on the 1080×1080 carousel card at headline size—**no** fifth line; the poster shows the full string. **Hard max ~52 characters** (including spaces) so wrapping stays predictable; one tight phrase or two very short clauses max.
+- copy: supporting body for this slide (becomes poster subhead). Must **physically fit** at most **two** lines at subhead size—**no** third line, **no** paragraph wall; the poster shows the full string. **Hard max ~110 characters** (including spaces). One or two very short sentences only; no bullet characters.
+- visual_direction: concrete **scene** for an illustrator (subjects, metaphors, setting)—must follow Enterprise **visual guidelines §6.1** (no type in scene; unique focal object/metaphor/environment every slide).
+- composition: framing for **this slide only**—must follow Enterprise **visual guidelines §6.1** (vary layout pattern every slide; e.g. asymmetrical weight, centred focal object with negative space).
+- overline: optional short category line; use empty string if the brief does not need a ribbon on every slide
+- cta: on **every** slide, one **short** CTA line — max **${POSTER_CTA_MAX_CHARS} characters** including spaces, single phrase, verb-led; non-CTA slides still include a tiny next-step or label (e.g. "See how it works") that obeys the same cap. The **last** row (slide ${slideCount}, role cta) must carry the strongest, most concrete action within that cap.
 - hashtags: comma-separated; may lightly repeat core tags
 
 Set-level rules (critical — every generation):
 - The full "plan" array is **one campaign story** read in order. Each slide advances the arc; do not paste the same headline or same core claim across slides.
-- Every slide's **headline** and **copy** must obey the **four-line headline** and **two-line subhead** rules for the square poster card—no truncation tricks.
-- visual_direction + composition together define a **unique** hero scene per slide while staying one premium B2B brand world.
+- Every slide's **headline** and **copy** must obey the **≤4-line headline** and **≤2-line subhead** rules for the square poster card—the UI shows full text; do not rely on overflow clipping.
+- Each slide's visual_direction + composition must define a **unique** hero scene in one premium B2B brand world (see visual guidelines §6).
 
-Do not include JSON inside markdown code blocks. Output raw JSON only.`;
+Do not include JSON inside markdown code blocks. Output raw JSON only.${ENTERPRISE_WRITING_GUIDELINES_BLOCK}${ENTERPRISE_VISUAL_GUIDELINES_CAROUSEL_PLAN_BLOCK}`;
 }
 
 /**
@@ -232,8 +242,7 @@ export async function generateCarouselFromPrompt(args: {
   if (!key) {
     return {
       ok: false,
-      message:
-        'Missing OpenAI API key. Set VITE_OPENAI_API_KEY in .env.local and restart npm run dev.',
+      message: 'Missing API key. Add it in your local environment for this project and restart the dev server.',
     };
   }
   const prompt = args.userPrompt.trim();

@@ -1,5 +1,13 @@
 import type { CarouselPlanSlide } from './carouselPlan';
-import type { AccentId, CreativeTheme, LinkedInFormatId, PosterContent, Variation } from './posterTypes';
+import { ENTERPRISE_VISUAL_GUIDELINES_IMAGE_BLOCK } from './enterpriseVisualGuidelines';
+import type {
+  AccentId,
+  CreativeTheme,
+  LinkedInFormatId,
+  PosterContent,
+  PosterHeroVisualStyle,
+  Variation,
+} from './posterTypes';
 
 const OPENAI_GENERATIONS_PATH = '/v1/images/generations';
 
@@ -12,8 +20,13 @@ function openAiImagesGenerationsUrl(): string {
 }
 const IMAGE_PROMPT_MAX_LEN = 8000;
 
-/** Default OpenAI image model for hero generation (`gpt-image-1` = GPT Image 1). Override with `VITE_OPENAI_IMAGE_MODEL`. */
-export const DEFAULT_OPENAI_IMAGE_MODEL = 'gpt-image-1';
+function mergeImagePromptWithVisualGuidelines(dynamicPart: string): string {
+  const merged = `${dynamicPart.trim()}${ENTERPRISE_VISUAL_GUIDELINES_IMAGE_BLOCK}`;
+  return merged.length <= IMAGE_PROMPT_MAX_LEN ? merged : `${merged.slice(0, IMAGE_PROMPT_MAX_LEN - 3)}...`;
+}
+
+/** Default OpenAI image model for hero generation (GPT Image 2). Override with `VITE_OPENAI_IMAGE_MODEL`. */
+export const DEFAULT_OPENAI_IMAGE_MODEL = 'gpt-image-2';
 
 export type OpenAiImageModelId =
   | 'gpt-image-1'
@@ -30,6 +43,25 @@ function resolveImageModel(): string {
 
 function isGptImageModel(model: string): boolean {
   return model.startsWith('gpt-image');
+}
+
+/** `gpt-image-2` supports `high` for maximum fidelity; other GPT Image models use `medium` (never `low`). */
+function gptImagesApiQuality(model: string): 'low' | 'medium' | 'high' {
+  const m = model.trim().toLowerCase();
+  if (m === 'gpt-image-2') {
+    return 'high';
+  }
+  return 'medium';
+}
+
+/**
+ * Only some GPT Image models accept `background: "transparent"` on `/v1/images/generations`.
+ * `gpt-image-2` responds with: "Transparent background is not supported for this model."
+ * All other GPT Image models use opaque PNG from the API; {@link finalizeHeroDataUrl} applies white-key transparency when needed.
+ */
+export function gptImageSupportsApiTransparency(model: string): boolean {
+  const m = model.trim().toLowerCase();
+  return m === 'gpt-image-1' || m === 'gpt-image-1-mini' || m === 'gpt-image-1.5';
 }
 
 /** Stopwords for cue extraction — avoids feeding full sentences that the model may render as type. */
@@ -237,15 +269,11 @@ function modalityInstruction(modality: HeroVisualModality): string {
     case 'iconsLine':
       return 'VISUAL EXECUTION — exactly ONE treatment: large flat or softly shaded icons plus clean line illustration (stroke-led, minimal fills). Icon-forward layout; no photoreal humans or 3D character heads—vector and line language only.';
     default:
-      return 'VISUAL EXECUTION — exactly ONE treatment: modern editorial illustration (flat colour blocks, soft gradients, or light painted digital illustration). Symbolic shapes and metaphors; no photoreal humans, no faces—stylised 2D only.';
+      return 'VISUAL EXECUTION — exactly ONE treatment: very high quality modern editorial illustration—commissioned campaign finish (refined flat colour, controlled gradients, or polished digital paint per §2.7 in the visual guidelines). Deliberate composition, confident edges, premium B2B polish; symbolic metaphors only. No photoreal humans, no faces, no rough sketches or clip-art—stylised 2D only.';
   }
 }
 
-/**
- * Derives thematic keywords from headline + subhead without quoting full copy,
- * so the image model is less likely to paint headline/subhead as typography.
- */
-function abstractVisualCue(headline: string, subhead: string, modality: HeroVisualModality): string {
+function themeKeywordsFromCopy(headline: string, subhead: string): string {
   const blob = `${headline} ${subhead}`
     .replace(/["'`]/g, ' ')
     .replace(/[^a-zA-Z0-9\s]/g, ' ')
@@ -266,8 +294,22 @@ function abstractVisualCue(headline: string, subhead: string, modality: HeroVisu
       break;
     }
   }
+  return keywords.length > 0
+    ? keywords.join(', ')
+    : 'trust, momentum, protection, digital convenience, B2B insurance India';
+}
 
-  const joined = keywords.length > 0 ? keywords.join(', ') : 'trust, momentum, protection, digital convenience, B2B insurance India';
+function photorealHumanThematicLine(headline: string, subhead: string): string {
+  const kw = themeKeywordsFromCopy(headline, subhead);
+  return `Story mood inferred from the copy only (never spell as readable type): ${kw}. Let the human scene embody this beat at a glance—metaphorical workplace storytelling, not a literal headline illustration.`;
+}
+
+/**
+ * Derives thematic keywords from headline + subhead without quoting full copy,
+ * so the image model is less likely to paint headline/subhead as typography.
+ */
+function abstractVisualCue(headline: string, subhead: string, modality: HeroVisualModality): string {
+  const joined = themeKeywordsFromCopy(headline, subhead);
 
   if (modality === 'soft3d') {
     return `Themes inferred from the copy (never spell as text): ${joined}. First infer the underlying idea (what problem or promise the copy implies), then express it as abstract soft-3D forms and materials—no literal depiction of headline words as text objects, no human figures.`;
@@ -275,7 +317,7 @@ function abstractVisualCue(headline: string, subhead: string, modality: HeroVisu
   if (modality === 'iconsLine') {
     return `Themes inferred from the copy (never spell as text): ${joined}. First infer the core concept, then express it with large icons and line-art metaphors only—no literal typography, no people.`;
   }
-  return `Themes inferred from the copy (never spell as text): ${joined}. First infer the core story or tension in the copy, then one illustrated metaphor (objects, paths, shields, layers, balance)—never spell these as words; no photoreal people.`;
+  return `Themes inferred from the copy (never spell as text): ${joined}. First infer the core story or tension in the copy, then one very high quality illustrated metaphor (objects, paths, shields, layers, balance)—premium editorial finish per §2.7; never spell these as words; no photoreal people; no sketch or clip-art quality.`;
 }
 
 export type AiHeroImageResult =
@@ -322,11 +364,7 @@ export function buildHeroImagePrompt(
 ): string {
   const headline = content.headline.replace(/\s+/g, ' ').trim();
   const sub = content.subhead.replace(/\s+/g, ' ').trim();
-  const modality = inferHeroVisualModality(headline, sub);
-  const cue =
-    headline || sub
-      ? abstractVisualCue(headline, sub, modality)
-      : 'Infer trust and momentum for B2B insurance India; express as stylised non-human illustration or soft 3D—nothing readable as text.';
+  const heroStyle: PosterHeroVisualStyle = variation.heroVisualStyle ?? 'default';
 
   const accentHints: Record<AccentId, string> = {
     purple: 'violet and deep purple accents on foreground subjects and icons only',
@@ -338,45 +376,42 @@ export function buildHeroImagePrompt(
   };
   const accentHint = accentHints[variation.accent] ?? accentHints.purple;
 
-  const gptOutput = isGptImageModel(resolveImageModel());
-
-  const noHumans =
-    'ABSOLUTE — no real or photoreal humans: no faces, eyes, skin, hair, hands as portraits, no stock-photo people, no silhouettes that read as specific persons, no mannequins or dolls. Use only non-human graphics: icons, abstract shapes, soft 3D objects, line illustration.';
-
-  const conceptFirst =
-    'Process: (1) Read the thematic keywords as the marketing concept only—not as literal objects to spell or paste. (2) Infer one clear abstract idea that fits a LinkedIn B2B insurance post beside copy. (3) Render that idea as a single cohesive hero cluster—metaphorical, not literal headline illustration.';
+  const gptOutput = gptImageSupportsApiTransparency(resolveImageModel());
 
   const parts: string[] = [
-    'Single hero artwork for a LinkedIn B2B poster right column: pure visual only—no poster layout, no mock UI frame, no second column, no typography block.',
-    'Compliance and brand: follow norms for Indian insurance and financial advertising—no exaggerated guarantees, no fear-mongering, no invented statistics, no impersonation of regulators or government marks, no misleading “before/after” savings. ACKO B2B tone: trustworthy, inclusive, modern India enterprise context where relevant; premium and restrained.',
-    noHumans,
-    conceptFirst,
-    modalityInstruction(modality),
-    'Use exactly one visual language end-to-end—do not collage mismatched styles (e.g. no flat icons glued onto photoreal scraps).',
-    cue,
-    `Overall mood fits a ${theme} enterprise poster; ${accentHint}.`,
+    'Generate one LinkedIn B2B poster hero image. Follow the Enterprise visual guidelines appended below.',
+    `Layout hero style slot: ${heroStyle}.`,
+    gptOutput
+      ? 'Output mode: API transparent background (see §2.5 transparency rules in the guidelines).'
+      : 'Output mode: flat white #FFFFFF background (see §2.5 white-background rules in the guidelines).',
   ];
 
-  if (gptOutput) {
+  if (heroStyle === 'photorealHuman') {
     parts.push(
-      'Background must be fully transparent: only the illustrated foreground subject and soft edge feather into transparency—no solid backdrop, no checkerboard pattern, no frame, no vignette, no painted “card” behind the subject.',
-      'One isolated focal cluster centred with breathing room; edges may softly fade to transparent for clean compositing on any poster gradient.',
-      'CRITICAL — no text anywhere: no letters, digits, words, slogans, logos, watermarks, captions, speech bubbles, charts with labels, app UI with strings, road signs, packaging with type, or infographic copy.',
-      'Composition: one clear focal idea, minimal clutter, insurance-grade polish.',
-      'Leave generous transparent margin on the sides for a vertical crop column beside copy added separately by the designer.'
+      `Infer mood from copy themes only (never spell as text): ${photorealHumanThematicLine(headline, sub)}`,
     );
   } else {
+    const modality =
+      heroStyle === 'stylizedIllustration' ? 'illustration' : inferHeroVisualModality(headline, sub);
+    parts.push(modalityInstruction(modality));
+    if (heroStyle === 'stylizedIllustration') {
+      parts.push(
+        'Apply stylizedIllustration rules in §3 and deliver a very high quality editorial illustration per §2.7 of the visual guidelines.'
+      );
+    }
+    if (heroStyle === 'defaultAlt') {
+      parts.push('Apply defaultAlt rules in §3 of the visual guidelines.');
+    }
     parts.push(
-      'BACKGROUND: uniform flat pure white (#FFFFFF) across the entire canvas behind the subject. No sky, horizon, room photo, or busy wallpaper.',
-      'One isolated focal cluster in the centre area; soft feather toward white at edges is OK. Subject must read as cut-out friendly for compositing.',
-      'CRITICAL — no text anywhere: no letters, digits, words, slogans, logos, watermarks, captions, speech bubbles, charts with labels, app UI with strings, road signs, packaging with type, or infographic copy.',
-      'Composition: one clear focal idea, minimal clutter, insurance-grade polish.',
-      'Leave generous empty white margin on the sides for a vertical crop column beside copy that will be added separately by the designer.'
+      headline || sub
+        ? abstractVisualCue(headline, sub, modality)
+        : 'Infer trust and momentum for B2B insurance India; express as stylised non-human illustration or soft 3D—nothing readable as text.',
     );
   }
 
-  const raw = parts.join(' ');
-  return raw.length <= IMAGE_PROMPT_MAX_LEN ? raw : `${raw.slice(0, IMAGE_PROMPT_MAX_LEN - 3)}...`;
+  parts.push(`Overall mood fits a ${theme} enterprise poster; ${accentHint}.`);
+
+  return mergeImagePromptWithVisualGuidelines(parts.filter(Boolean).join(' '));
 }
 
 /**
@@ -399,21 +434,7 @@ export function buildCarouselSlideHeroImagePrompt(args: {
   const vd = args.planSlide.visual_direction.replace(/\s+/g, ' ').trim();
   const comp = args.planSlide.composition.replace(/\s+/g, ' ').trim();
   const model = resolveImageModel();
-  const gptOutput = isGptImageModel(model);
-
-  const globalStyle =
-    'GLOBAL STYLE FAMILY for this carousel (brand cohesion — this image must still be unique): premium fintech–insurance illustration; modern soft 3D or polished abstract dimensional forms; deep purple gradient moods with mint / teal accent highlights; soft lighting; rounded minimal character shapes if any figures appear—never photoreal humans, no identifiable faces, no stock-photo people, no hands as portraits.';
-
-  const uniqueness = `This is slide ${x} of ${y} of one LinkedIn carousel document. The visual composition MUST be clearly different from every other slide: different focal object, different metaphor, different setting, different framing and rhythm. Do NOT reuse the same illustration with only colour or background tweaks. Do NOT repeat the same character poses or layout structure as other slides.`;
-
-  const noHumans =
-    'ABSOLUTE — no real or photoreal humans: no faces, eyes, skin, hair, hands as portraits, no stock-photo people, no silhouettes that read as specific persons. Use stylised non-human graphics or highly abstracted rounded figures only.';
-
-  const noText =
-    'CRITICAL — pure artwork only: no letters, words, numerals, logos, watermarks, UI copy, speech bubbles, chart labels, road signs, packaging text, or any typography. Headlines and body copy are composited separately by the product; render ONLY the visual scene.';
-
-  const compliance =
-    'Compliance: follow norms for Indian insurance and financial advertising—no exaggerated guarantees, no fear-mongering, no invented statistics, no impersonation of regulators. ACKO B2B tone: trustworthy, inclusive, modern enterprise context where relevant; premium and restrained.';
+  const gptOutput = gptImageSupportsApiTransparency(model);
 
   const neighbour =
     args.prevVisualSummary && args.nextVisualSummary
@@ -425,37 +446,21 @@ export function buildCarouselSlideHeroImagePrompt(args: {
         : '';
 
   const parts: string[] = [
-    'Single hero artwork for a LinkedIn B2B poster right column (carousel slide). Pure visual only—no poster layout, no mock UI frame, no second column, no typography block.',
-    compliance,
-    noHumans,
-    globalStyle,
+    'Generate one LinkedIn carousel slide hero image. Follow the Enterprise visual guidelines appended below (especially §6).',
+    `Slide ${x} of ${y}.`,
+    gptOutput
+      ? 'Output mode: API transparent background (see §2.5 transparency rules in the guidelines).'
+      : 'Output mode: flat white #FFFFFF background (see §2.5 white-background rules in the guidelines).',
     `Story beat for this slide: ${args.planSlide.role}.`,
     `PRIMARY SCENE DIRECTION (follow closely): ${vd}`,
     `COMPOSITION FOR THIS SLIDE ONLY: ${comp}`,
-    uniqueness,
+    `This slide must be clearly different from every other slide in the set (see §6.2 uniqueness rules).`,
     brief ? `Campaign continuity (themes only, never as readable text): ${brief}` : '',
     neighbour,
-    noText,
     `Overall mood fits a ${args.theme} enterprise poster side panel.`,
-    'Use exactly one visual language end-to-end for this image—do not collage mismatched styles.',
   ];
 
-  if (gptOutput) {
-    parts.push(
-      'Background must be fully transparent: only the illustrated foreground subject and soft edge feather into transparency—no solid backdrop, no checkerboard pattern, no frame, no vignette, no painted “card” behind the subject.',
-      'One isolated focal cluster with breathing room; edges may softly fade to transparent for clean compositing on any poster gradient.',
-      'Leave generous transparent margin on the sides for a vertical crop column beside copy added separately by the designer.'
-    );
-  } else {
-    parts.push(
-      'BACKGROUND: uniform flat pure white (#FFFFFF) across the entire canvas behind the subject. No sky, horizon, room photo, or busy wallpaper.',
-      'One isolated focal cluster in the centre area; soft feather toward white at edges is OK.',
-      'Leave generous empty white margin on the sides for a vertical crop column beside copy added separately by the designer.'
-    );
-  }
-
-  const raw = parts.filter(Boolean).join(' ');
-  return raw.length <= IMAGE_PROMPT_MAX_LEN ? raw : `${raw.slice(0, IMAGE_PROMPT_MAX_LEN - 3)}...`;
+  return mergeImagePromptWithVisualGuidelines(parts.filter(Boolean).join(' '));
 }
 
 /** Extra instructions so each carousel slide gets a distinct hero while staying one visual family. */
@@ -481,7 +486,7 @@ export function appendCarouselSlideHeroContext(
 }
 
 /**
- * OpenAI Images API — default **`gpt-image-1`** (GPT Image 1). Set `VITE_OPENAI_IMAGE_MODEL=dall-e-3` to use DALL·E 3.
+ * OpenAI Images API — default **`gpt-image-2`** at **`quality: high`**. Native `background: transparent` is only sent for **`gpt-image-1`**, **`gpt-image-1-mini`**, and **`gpt-image-1.5`**; **`gpt-image-2`** uses opaque PNG + client white-key (see `finalizeHeroDataUrl`). Set `VITE_OPENAI_IMAGE_MODEL` to override (e.g. `dall-e-3`).
  * Requires `VITE_OPENAI_API_KEY` — local/dev only; exposed in client bundle.
  *
  * CORS: `npm run dev` uses `/api/openai/...` (Vite `server.proxy`). For `vite preview`, set
@@ -503,6 +508,7 @@ export async function generateOpenAiHeroImage(args: {
 
   const model = resolveImageModel();
   const gpt = isGptImageModel(model);
+  const nativeTransparent = gpt && gptImageSupportsApiTransparency(model);
   const size = gpt ? gptImageSizeForFormat(args.format) : dalleSizeForFormat(args.format);
 
   const body: Record<string, unknown> = gpt
@@ -511,9 +517,9 @@ export async function generateOpenAiHeroImage(args: {
         prompt: args.prompt,
         n: 1,
         size,
-        quality: 'medium',
-        background: 'transparent',
+        quality: gptImagesApiQuality(model),
         output_format: 'png',
+        ...(nativeTransparent ? { background: 'transparent' as const } : {}),
       }
     : {
         model,
@@ -559,7 +565,7 @@ export async function generateOpenAiHeroImage(args: {
       return {
         ok: true,
         dataUrl: `data:image/png;base64,${b64}`,
-        usedNativeTransparency: gpt && body.background === 'transparent',
+        usedNativeTransparency: nativeTransparent,
       };
     }
 

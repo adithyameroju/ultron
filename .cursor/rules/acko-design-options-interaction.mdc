@@ -1,0 +1,30 @@
+---
+description: Design options vs Poster options — workspace click behavior (strict, all formats).
+alwaysApply: true
+globs: src/App.tsx,src/App.css
+---
+
+# Design options interaction (strict)
+
+Applies to **workspace** creative rows in `App.tsx` for **landscape, square, vertical, and carousel**.
+
+## Poster options row
+
+- Click **selects copy** and **opens lightbox preview** (`setLightbox` / “View image”).
+- Arrow keys move between copy routes when the poster row is focused.
+
+## Design options row (workspace)
+
+- Click **only** updates the active layout (`setSelected` / layout index).
+- Must **not** call `setLightbox`, open a modal, or navigate to preview.
+- Must **not** show the “View image” hover CTA on design thumbnails.
+- Effect: poster-options tiles re-render as **copy × selected layout** (`mergeCopyAndLayoutVariation`); design row does not launch preview.
+
+## Lightbox (already open)
+
+- Carousel lightbox **layout strip** inside the modal may switch layout for the open preview (`setSelected` + carousel lightbox index). That is not “opening a new popup” from the workspace design row.
+
+## Do not regress
+
+- Never re-add `setLightbox` to **workspace** Design options `onClick` handlers without explicit product approval.
+- Do not pass global `heroImageLoading` to design-option thumbnails — use shield/URL only (`heroImageLoading={false}`) so layout pickers do not all show hero spinners.
