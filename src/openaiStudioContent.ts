@@ -9,8 +9,7 @@ import { normalizePosterCta, POSTER_CTA_MAX_CHARS } from './posterCopyClamp';
 import { clampCarouselSlideCount, type PosterContent, type PosterCopyRoute } from './posterTypes';
 import enterpriseContentGuidelines from './enterprise-content-guidelines.md?raw';
 import { ENTERPRISE_VISUAL_GUIDELINES_CAROUSEL_PLAN_BLOCK } from './enterpriseVisualGuidelines';
-
-const OPENAI_CHAT_PATH = '/v1/chat/completions';
+import { OPENAI_CHAT_COMPLETIONS_URL, openAiProxyErrorMessage } from './openaiApi';
 
 const ENTERPRISE_WRITING_GUIDELINES_BLOCK = `
 
@@ -18,13 +17,6 @@ const ENTERPRISE_WRITING_GUIDELINES_BLOCK = `
 
 ${enterpriseContentGuidelines}
 `;
-
-function openAiChatCompletionsUrl(): string {
-  if (import.meta.env.DEV || import.meta.env.VITE_OPENAI_USE_DEV_PROXY === 'true') {
-    return `/api/openai${OPENAI_CHAT_PATH}`;
-  }
-  return `https://api.openai.com${OPENAI_CHAT_PATH}`;
-}
 
 export type StudioContentFromPromptResult =
   | { ok: true; content: PosterContent }
@@ -115,31 +107,21 @@ function normalizeContent(raw: Record<string, unknown>): PosterContent | null {
 }
 
 /**
- * Uses OpenAI Chat Completions (JSON). Same API key as hero image generation in the app.
- * Dev uses Vite proxy /api/openai → api.openai.com (see vite.config.ts).
+ * Uses OpenAI Chat Completions (JSON) via same-origin `/api/openai` proxy (key on server).
  */
 export async function generatePosterContentFromPrompt(args: {
-  apiKey: string;
   userPrompt: string;
 }): Promise<StudioContentFromPromptResult> {
-  const key = args.apiKey.trim();
-  if (!key) {
-    return {
-      ok: false,
-      message: 'Missing API key. Add it in your local environment for this project and restart the dev server.',
-    };
-  }
   const prompt = args.userPrompt.trim();
   if (!prompt) {
     return { ok: false, message: 'Enter a campaign prompt first.' };
   }
 
   try {
-    const res = await fetch(openAiChatCompletionsUrl(), {
+    const res = await fetch(OPENAI_CHAT_COMPLETIONS_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${key}`,
       },
       body: JSON.stringify({
         model: 'gpt-4o-mini',
@@ -162,13 +144,16 @@ export async function generatePosterContentFromPrompt(args: {
     } catch {
       return {
         ok: false,
-        message: res.ok ? 'Invalid JSON from OpenAI.' : `${res.status}: ${text.slice(0, 200)}`,
+        message: res.ok ? 'Invalid JSON from OpenAI.' : openAiProxyErrorMessage(res.status, text),
       };
     }
 
     if (!res.ok) {
       const err = parsed as { error?: { message?: string } };
-      return { ok: false, message: err.error?.message ?? `${res.status} ${res.statusText}` };
+      return {
+        ok: false,
+        message: err.error?.message ?? openAiProxyErrorMessage(res.status, text),
+      };
     }
 
     const root = parsed as {
@@ -234,17 +219,9 @@ Do not include JSON inside markdown code blocks. Output raw JSON only.${ENTERPRI
  * V2 carousel: Step 1 — structured plan JSON; Step 2 (in App) maps plan to poster rows and generates images per \`visual_direction\`.
  */
 export async function generateCarouselFromPrompt(args: {
-  apiKey: string;
   userPrompt: string;
   slideCount: number;
 }): Promise<CarouselFromPromptResult> {
-  const key = args.apiKey.trim();
-  if (!key) {
-    return {
-      ok: false,
-      message: 'Missing API key. Add it in your local environment for this project and restart the dev server.',
-    };
-  }
   const prompt = args.userPrompt.trim();
   const slideCount = clampCarouselSlideCount(args.slideCount);
   if (!prompt) {
@@ -252,11 +229,10 @@ export async function generateCarouselFromPrompt(args: {
   }
 
   try {
-    const res = await fetch(openAiChatCompletionsUrl(), {
+    const res = await fetch(OPENAI_CHAT_COMPLETIONS_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${key}`,
       },
       body: JSON.stringify({
         model: 'gpt-4o-mini',
@@ -279,13 +255,16 @@ export async function generateCarouselFromPrompt(args: {
     } catch {
       return {
         ok: false,
-        message: res.ok ? 'Invalid JSON from OpenAI.' : `${res.status}: ${text.slice(0, 200)}`,
+        message: res.ok ? 'Invalid JSON from OpenAI.' : openAiProxyErrorMessage(res.status, text),
       };
     }
 
     if (!res.ok) {
       const err = parsed as { error?: { message?: string } };
-      return { ok: false, message: err.error?.message ?? `${res.status} ${res.statusText}` };
+      return {
+        ok: false,
+        message: err.error?.message ?? openAiProxyErrorMessage(res.status, text),
+      };
     }
 
     const root = parsed as {

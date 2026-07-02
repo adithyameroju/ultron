@@ -250,8 +250,6 @@ function App({ user, onSignOut }: AppProps) {
 
   const [carouselExportMenu, setCarouselExportMenu] = useState<null | 'workspace' | 'lightbox'>(null);
 
-  const openaiApiKey = import.meta.env.VITE_OPENAI_API_KEY ?? '';
-
   const canGenerateFromV2Prompt = useMemo(
     () =>
       studioVersion === 'v2' &&
@@ -259,7 +257,6 @@ function App({ user, onSignOut }: AppProps) {
       !v2FromPromptLoading &&
       !carouselHeroBusy &&
       !isBooting &&
-      Boolean(openaiApiKey.trim()) &&
       (format !== 'carousel' ||
         (carouselSlideCount >= CAROUSEL_SLIDE_COUNT.min &&
           carouselSlideCount <= CAROUSEL_SLIDE_COUNT.max)),
@@ -269,7 +266,6 @@ function App({ user, onSignOut }: AppProps) {
       v2FromPromptLoading,
       carouselHeroBusy,
       isBooting,
-      openaiApiKey,
       format,
       carouselSlideCount,
     ]
@@ -385,8 +381,7 @@ function App({ user, onSignOut }: AppProps) {
         includeVisual,
       };
     }
-    const wantsHeroAfter =
-      includeVisual && heroUiTab === 'ai' && Boolean(openaiApiKey.trim());
+    const wantsHeroAfter = includeVisual && heroUiTab === 'ai';
     const noMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (noMotion || wantsHeroAfter) {
       if (!canGenerate) {
@@ -407,8 +402,7 @@ function App({ user, onSignOut }: AppProps) {
     }
     setIsBooting(true);
     bootTimeoutRef.current = setTimeout(() => {
-      pendingHeroAfterBootRef.current =
-        includeVisual && heroUiTab === 'ai' && Boolean(openaiApiKey.trim());
+      pendingHeroAfterBootRef.current = includeVisual && heroUiTab === 'ai';
       setGenerated(next);
       setSelected(0);
       setNcCopyIdx(0);
@@ -428,7 +422,6 @@ function App({ user, onSignOut }: AppProps) {
     generated,
     carouselSlideIndex,
     heroUiTab,
-    openaiApiKey,
   ]);
 
   const clearAll = useCallback(() => {
@@ -996,7 +989,6 @@ function App({ user, onSignOut }: AppProps) {
     const result = await generateOpenAiHeroImage({
       prompt,
       format: generated.format,
-      apiKey: openaiApiKey,
     });
     if (result.ok) {
       setHeroAiLoading(false);
@@ -1055,7 +1047,6 @@ function App({ user, onSignOut }: AppProps) {
     generated,
     v,
     includeVisual,
-    openaiApiKey,
     draft.headline,
     draft.subhead,
     carouselSlideIndex,
@@ -1067,7 +1058,7 @@ function App({ user, onSignOut }: AppProps) {
   ]);
 
   const generateStaticHeroDeck = useCallback(async () => {
-    if (!generated || generated.format === 'carousel' || !includeVisual || !openaiApiKey.trim()) {
+    if (!generated || generated.format === 'carousel' || !includeVisual) {
       return;
     }
     setHeroAiError(null);
@@ -1098,7 +1089,6 @@ function App({ user, onSignOut }: AppProps) {
       const result = await generateOpenAiHeroImage({
         prompt,
         format: generated.format,
-        apiKey: openaiApiKey,
       });
       const url = await finalizeHeroDataUrl(result);
       if (url && result.ok) {
@@ -1126,7 +1116,7 @@ function App({ user, onSignOut }: AppProps) {
     } finally {
       setStaticHeroDeckLoading(false);
     }
-  }, [generated, includeVisual, openaiApiKey, previewContent, studioVersion, v2Phase, posterHeadlineLayout]);
+  }, [generated, includeVisual, previewContent, studioVersion, v2Phase, posterHeadlineLayout]);
 
   /** After headline-driven `generate()` boot, optionally run AI hero(s) when the AI tab is active. */
   useEffect(() => {
@@ -1137,7 +1127,7 @@ function App({ user, onSignOut }: AppProps) {
       return undefined;
     }
     pendingHeroAfterBootRef.current = false;
-    if (!includeVisual || heroUiTab !== 'ai' || !openaiApiKey.trim() || !generated) {
+    if (!includeVisual || heroUiTab !== 'ai' || !generated) {
       return undefined;
     }
     if (generated.format === 'carousel' && generated.carouselSlides?.length) {
@@ -1146,7 +1136,7 @@ function App({ user, onSignOut }: AppProps) {
       void generateStaticHeroDeck();
     }
     return undefined;
-  }, [isBooting, generated, includeVisual, heroUiTab, openaiApiKey, generateOpenAiHero, generateStaticHeroDeck]);
+  }, [isBooting, generated, includeVisual, heroUiTab, generateOpenAiHero, generateStaticHeroDeck]);
 
   const goCarouselSlide = useCallback(
     (i: number) => {
@@ -1208,7 +1198,6 @@ function App({ user, onSignOut }: AppProps) {
       setStaticHeroImageMap({});
       setHeroShieldPreferred(true);
       const result = await generateCarouselFromPrompt({
-        apiKey: openaiApiKey,
         userPrompt: v2UserPrompt.trim(),
         slideCount: clampCarouselSlideCount(carouselSlideCount),
       });
@@ -1231,7 +1220,7 @@ function App({ user, onSignOut }: AppProps) {
         carouselPlan: result.plan,
         carouselCampaignBrief: v2UserPrompt.trim(),
       });
-      if (includeVisual && heroUiTab === 'ai' && openaiApiKey.trim()) {
+      if (includeVisual && heroUiTab === 'ai') {
         setCarouselHeroBusy(true);
         const campaignBrief = v2UserPrompt.trim();
         const plan = result.plan;
@@ -1250,7 +1239,6 @@ function App({ user, onSignOut }: AppProps) {
             const imgResult = await generateOpenAiHeroImage({
               prompt,
               format: 'carousel',
-              apiKey: openaiApiKey,
             });
             const finalUrl = await finalizeHeroDataUrl(imgResult);
             setGenerated((prev) => {
@@ -1279,7 +1267,6 @@ function App({ user, onSignOut }: AppProps) {
       }
     } else {
       const result = await generatePosterContentFromPrompt({
-        apiKey: openaiApiKey,
         userPrompt: v2UserPrompt.trim(),
       });
       setV2FromPromptLoading(false);
@@ -1306,7 +1293,7 @@ function App({ user, onSignOut }: AppProps) {
       setHeroAiUrl(null);
       setStaticHeroImageMap({});
       setHeroShieldPreferred(true);
-    } else if (!includeVisual || !openaiApiKey.trim() || heroUiTab !== 'ai') {
+    } else if (!includeVisual || heroUiTab !== 'ai') {
       setHeroAiUrl(null);
       setStaticHeroImageMap({});
       setHeroShieldPreferred(true);
@@ -1314,7 +1301,6 @@ function App({ user, onSignOut }: AppProps) {
     // carousel + visuals + API key: hero loop already set shield off and hero URL; do not reset here
   }, [
     canGenerateFromV2Prompt,
-    openaiApiKey,
     v2UserPrompt,
     format,
     theme,

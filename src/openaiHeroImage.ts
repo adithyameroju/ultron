@@ -8,16 +8,8 @@ import type {
   PosterHeroVisualStyle,
   Variation,
 } from './posterTypes';
+import { OPENAI_IMAGES_GENERATIONS_URL, openAiProxyErrorMessage } from './openaiApi';
 
-const OPENAI_GENERATIONS_PATH = '/v1/images/generations';
-
-/** Same-origin proxy (Vite) → https://api.openai.com/v1/images/generations */
-function openAiImagesGenerationsUrl(): string {
-  if (import.meta.env.DEV || import.meta.env.VITE_OPENAI_USE_DEV_PROXY === 'true') {
-    return `/api/openai${OPENAI_GENERATIONS_PATH}`;
-  }
-  return `https://api.openai.com${OPENAI_GENERATIONS_PATH}`;
-}
 const IMAGE_PROMPT_MAX_LEN = 8000;
 
 function mergeImagePromptWithVisualGuidelines(dynamicPart: string): string {
@@ -486,26 +478,12 @@ export function appendCarouselSlideHeroContext(
 }
 
 /**
- * OpenAI Images API — default **`gpt-image-2`** at **`quality: high`**. Native `background: transparent` is only sent for **`gpt-image-1`**, **`gpt-image-1-mini`**, and **`gpt-image-1.5`**; **`gpt-image-2`** uses opaque PNG + client white-key (see `finalizeHeroDataUrl`). Set `VITE_OPENAI_IMAGE_MODEL` to override (e.g. `dall-e-3`).
- * Requires `VITE_OPENAI_API_KEY` — local/dev only; exposed in client bundle.
- *
- * CORS: `npm run dev` uses `/api/openai/...` (Vite `server.proxy`). For `vite preview`, set
- * `VITE_OPENAI_USE_DEV_PROXY=true` in `.env.local` and rebuild. Static hosting needs a serverless proxy.
+ * OpenAI Images API via same-origin `/api/openai` proxy (key on server).
  */
 export async function generateOpenAiHeroImage(args: {
   prompt: string;
   format: LinkedInFormatId;
-  apiKey: string;
 }): Promise<AiHeroImageResult> {
-  const key = args.apiKey.trim();
-  if (!key) {
-    return {
-      ok: false,
-      message:
-        'Missing OpenAI API key. Edit .env.local and set VITE_OPENAI_API_KEY=sk-... (no quotes), save, restart npm run dev.',
-    };
-  }
-
   const model = resolveImageModel();
   const gpt = isGptImageModel(model);
   const nativeTransparent = gpt && gptImageSupportsApiTransparency(model);
@@ -531,11 +509,10 @@ export async function generateOpenAiHeroImage(args: {
       };
 
   try {
-    const res = await fetch(openAiImagesGenerationsUrl(), {
+    const res = await fetch(OPENAI_IMAGES_GENERATIONS_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${key}`,
       },
       body: JSON.stringify(body),
     });
@@ -547,13 +524,16 @@ export async function generateOpenAiHeroImage(args: {
     } catch {
       return {
         ok: false,
-        message: res.ok ? 'Invalid JSON from OpenAI.' : `${res.status}: ${text.slice(0, 200)}`,
+        message: res.ok ? 'Invalid JSON from OpenAI.' : openAiProxyErrorMessage(res.status, text),
       };
     }
 
     if (!res.ok) {
       const err = parsed as { error?: { message?: string } };
-      return { ok: false, message: err.error?.message ?? `${res.status} ${res.statusText}` };
+      return {
+        ok: false,
+        message: err.error?.message ?? openAiProxyErrorMessage(res.status, text),
+      };
     }
 
     const root = parsed as {
