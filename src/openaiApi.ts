@@ -8,6 +8,9 @@ export const OPENAI_CHAT_COMPLETIONS_URL = openAiProxyUrl('/v1/chat/completions'
 export const OPENAI_IMAGES_GENERATIONS_URL = openAiProxyUrl('/v1/images/generations');
 
 export function openAiProxyErrorMessage(status: number, bodyText: string): string {
+  if (status === 404) {
+    return 'OpenAI API route not found on server. Redeploy the latest version with /api/openai functions enabled.';
+  }
   if (status === 500) {
     try {
       const parsed = JSON.parse(bodyText) as { error?: { message?: string } };

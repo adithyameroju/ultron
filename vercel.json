@@ -1,6 +1,14 @@
 {
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
+  "functions": {
+    "api/openai/v1/chat/completions.ts": {
+      "maxDuration": 60
+    },
+    "api/openai/v1/images/generations.ts": {
+      "maxDuration": 120
+    }
+  },
   "rewrites": [
     {
       "source": "/((?!api/).*)",

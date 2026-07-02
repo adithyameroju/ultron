@@ -2,7 +2,11 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 const OPENAI_ORIGIN = 'https://api.openai.com';
 
-export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
+export async function proxyOpenAiRequest(
+  req: VercelRequest,
+  res: VercelResponse,
+  upstreamPath: string
+): Promise<void> {
   if (req.method === 'OPTIONS') {
     res.status(204).end();
     return;
@@ -19,30 +23,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     return;
   }
 
-  const rawPath = req.query.path;
-  const segments = Array.isArray(rawPath) ? rawPath : rawPath ? [rawPath] : [];
-  const path = segments.map(String).join('/');
+  const path = upstreamPath.replace(/^\/+/, '');
   if (!path) {
     res.status(400).json({ error: { message: 'Missing OpenAI API path.' } });
     return;
   }
 
-  const query = new URLSearchParams();
-  for (const [key, value] of Object.entries(req.query)) {
-    if (key === 'path' || value === undefined) {
-      continue;
-    }
-    if (Array.isArray(value)) {
-      for (const v of value) {
-        query.append(key, String(v));
-      }
-    } else {
-      query.append(key, String(value));
-    }
-  }
-  const qs = query.toString();
-  const upstreamUrl = `${OPENAI_ORIGIN}/${path}${qs ? `?${qs}` : ''}`;
-
+  const upstreamUrl = `${OPENAI_ORIGIN}/${path}`;
   const method = req.method ?? 'GET';
   const headers: Record<string, string> = {
     Authorization: `Bearer ${apiKey}`,
