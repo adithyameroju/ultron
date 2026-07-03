@@ -1,18 +1,15 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
-
 const OPENAI_ORIGIN = 'https://api.openai.com';
 
-export async function proxyOpenAiRequest(
-  req: VercelRequest,
-  res: VercelResponse,
-  upstreamPath: string
-): Promise<void> {
+/** @param {import('@vercel/node').VercelRequest} req */
+/** @param {import('@vercel/node').VercelResponse} res */
+/** @param {string} upstreamPath */
+export async function proxyOpenAiRequest(req, res, upstreamPath) {
   if (req.method === 'OPTIONS') {
     res.status(204).end();
     return;
   }
 
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  const apiKey = (process.env.OPENAI_API_KEY ?? process.env.VITE_OPENAI_API_KEY ?? '').trim();
   if (!apiKey) {
     res.status(500).json({
       error: {
@@ -31,7 +28,8 @@ export async function proxyOpenAiRequest(
 
   const upstreamUrl = `${OPENAI_ORIGIN}/${path}`;
   const method = req.method ?? 'GET';
-  const headers: Record<string, string> = {
+  /** @type {Record<string, string>} */
+  const headers = {
     Authorization: `Bearer ${apiKey}`,
   };
   const contentType = req.headers['content-type'];
@@ -39,7 +37,8 @@ export async function proxyOpenAiRequest(
     headers['Content-Type'] = contentType;
   }
 
-  let body: string | undefined;
+  /** @type {string | undefined} */
+  let body;
   if (method !== 'GET' && method !== 'HEAD') {
     if (typeof req.body === 'string') {
       body = req.body;

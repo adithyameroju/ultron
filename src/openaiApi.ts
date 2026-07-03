@@ -11,6 +11,9 @@ export function openAiProxyErrorMessage(status: number, bodyText: string): strin
   if (status === 404) {
     return 'OpenAI API route not found on server. Redeploy the latest version with /api/openai functions enabled.';
   }
+  if (bodyText.includes('FUNCTION_INVOCATION_FAILED')) {
+    return 'OpenAI API route crashed on the server. Redeploy the latest version, then confirm OPENAI_API_KEY is set in Vercel.';
+  }
   if (status === 500) {
     try {
       const parsed = JSON.parse(bodyText) as { error?: { message?: string } };
