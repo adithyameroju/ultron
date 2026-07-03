@@ -102,8 +102,12 @@ export type Variation = {
   /** Short marketing name for the variation card (e.g. Bold, Minimal). */
   creativeName?: string;
   accent: AccentId;
-  /** Distinct premium canvas recipe (0–7) for export backgrounds per creative option. */
+  /** Legacy combined canvas id — prefer `backgroundGradientId` + `stylePatternId`. */
   backgroundStyleId?: number;
+  /** Base gradient wash (workspace Background strip). */
+  backgroundGradientId?: number;
+  /** Abstract / curvy pattern overlay (workspace Style strip). */
+  stylePatternId?: number;
   /**
    * Static poster only: which AI hero treatment this layout option expects in the right column.
    * Omitted or `default` uses the standard non-photoreal hero policy; `defaultAlt` is a second distinct abstract hero.

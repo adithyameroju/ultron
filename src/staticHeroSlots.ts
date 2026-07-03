@@ -1,6 +1,6 @@
 import type { PosterHeroVisualStyle } from './posterTypes';
 
-/** Layout strip order — must match `buildLayoutAccentStrip` hero slots. */
+/** Hero visual styles for AI/static hero deck — independent of design colour strip. */
 export const STATIC_HERO_STYLES: readonly PosterHeroVisualStyle[] = [
   'default',
   'defaultAlt',

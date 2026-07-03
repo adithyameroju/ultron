@@ -1,13 +1,22 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { MouseEvent as ReactMouseEvent } from 'react';
 import { createRoot } from 'react-dom/client';
 import { toPng } from 'html-to-image';
 import { PosterCard } from './components/PosterCard';
+import { WorkspaceCanvasSwatch, WorkspaceCanvasSwatchStrip } from './components/WorkspaceCanvasSwatch';
 import {
+  BACKGROUND_PALETTE_LABELS,
+  STYLE_PATTERN_LABELS,
+  canvasSwatchBackground,
+} from './posterBackgroundLayers';
+import {
+  buildBackgroundGradientStrip,
   buildCopyVisualStrip,
-  buildLayoutAccentStrip,
+  buildDesignColorStrip,
+  buildStylePatternStrip,
   buildVariations,
   expandToFourCopyRoutes,
-  mergeCopyAndLayoutVariation,
+  mergePosterVariation,
 } from './buildVariations';
 import type { PosterHeadlineLayout } from './headlineLineFit';
 import { buildLinkedInCaption } from './caption';
@@ -43,6 +52,13 @@ import {
   saveHeroAiToHistory,
   type HeroAiHistoryEntry,
 } from './heroAiHistoryStorage';
+import {
+  clearStudioLibrary,
+  deleteStudioLibraryEntry,
+  listStudioLibrary,
+  saveStudioLibraryEntry,
+  type StudioLibraryEntry,
+} from './studioLibraryStorage';
 import './App.css';
 import type { UltronUser } from './authSession';
 import { displayInitialFromUser, displayShortNameFromUser } from './displayName';
@@ -86,8 +102,22 @@ function blobToDataUrl(blob: Blob): Promise<string> {
   });
 }
 
-function ThumbViewCta() {
-  return <span className="thumb-hover-cta">View image</span>;
+type ThumbHoverActionsProps = {
+  onView: (e: ReactMouseEvent<HTMLButtonElement>) => void;
+  onEdit: (e: ReactMouseEvent<HTMLButtonElement>) => void;
+};
+
+function ThumbHoverActions({ onView, onEdit }: ThumbHoverActionsProps) {
+  return (
+    <div className="thumb-hover-cta" aria-hidden>
+      <button type="button" className="thumb-hover-cta__btn" onClick={onView}>
+        View
+      </button>
+      <button type="button" className="thumb-hover-cta__btn thumb-hover-cta__btn--edit" onClick={onEdit}>
+        Edit
+      </button>
+    </div>
+  );
 }
 
 async function finalizeHeroDataUrl(
@@ -192,6 +222,14 @@ function App({ user, onSignOut }: AppProps) {
   const [selected, setSelected] = useState(0);
   /** Non-carousel: which copy / headline route is active (first workspace strip). */
   const [ncCopyIdx, setNcCopyIdx] = useState(0);
+  /** Non-carousel: base gradient canvas strip selection. */
+  const [selectedBackground, setSelectedBackground] = useState(0);
+  /** Non-carousel: pattern overlay strip selection. */
+  const [selectedStyle, setSelectedStyle] = useState(0);
+  const [appTab, setAppTab] = useState<'generator' | 'library'>('generator');
+  const [libraryRows, setLibraryRows] = useState<{ entry: StudioLibraryEntry; thumbUrl: string }[]>([]);
+  const libraryThumbUrlsRef = useRef<string[]>([]);
+  const pendingLibrarySaveRef = useRef<string | null>(null);
   const [lightbox, setLightbox] = useState<number | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [isBooting, setIsBooting] = useState(false);
@@ -340,6 +378,10 @@ function App({ user, onSignOut }: AppProps) {
   /** Carousel layout strip: shimmer while copy is generating. */
   const workspaceCarouselLayoutBusy = workspaceCopyGenerating;
 
+  const queueLibrarySave = useCallback(() => {
+    pendingLibrarySaveRef.current = String(Date.now());
+  }, []);
+
   const generate = useCallback(() => {
     if (!canGenerate) {
       return;
@@ -391,6 +433,9 @@ function App({ user, onSignOut }: AppProps) {
       setGenerated(next);
       setSelected(0);
       setNcCopyIdx(0);
+      setSelectedBackground(0);
+      setSelectedStyle(0);
+      queueLibrarySave();
       setHeroAiUrl(null);
       setStaticHeroImageMap({});
       setHeroAiError(null);
@@ -406,6 +451,9 @@ function App({ user, onSignOut }: AppProps) {
       setGenerated(next);
       setSelected(0);
       setNcCopyIdx(0);
+      setSelectedBackground(0);
+      setSelectedStyle(0);
+      queueLibrarySave();
       setIsBooting(false);
       bootTimeoutRef.current = null;
       setHeroAiUrl(null);
@@ -422,6 +470,7 @@ function App({ user, onSignOut }: AppProps) {
     generated,
     carouselSlideIndex,
     heroUiTab,
+    queueLibrarySave,
   ]);
 
   const clearAll = useCallback(() => {
@@ -433,6 +482,8 @@ function App({ user, onSignOut }: AppProps) {
     setGenerated(null);
     setSelected(0);
     setNcCopyIdx(0);
+    setSelectedBackground(0);
+    setSelectedStyle(0);
     setLightbox(null);
     setHeroLibrary('default');
     setHeroUiTab('default');
@@ -511,17 +562,36 @@ function App({ user, onSignOut }: AppProps) {
     }
   }, []);
 
+  const refreshStudioLibrary = useCallback(async () => {
+    libraryThumbUrlsRef.current.forEach((u) => URL.revokeObjectURL(u));
+    libraryThumbUrlsRef.current = [];
+    try {
+      const entries = await listStudioLibrary(48);
+      const rows = entries.map((entry) => {
+        const thumbUrl = URL.createObjectURL(entry.blob);
+        libraryThumbUrlsRef.current.push(thumbUrl);
+        return { entry, thumbUrl };
+      });
+      setLibraryRows(rows);
+    } catch {
+      setLibraryRows([]);
+    }
+  }, []);
+
   useEffect(() => {
     carouselSlideIndexRef.current = carouselSlideIndex;
   }, [carouselSlideIndex]);
 
   useEffect(() => {
     void refreshHeroAiHistory();
+    void refreshStudioLibrary();
     return () => {
       heroAiThumbUrlsRef.current.forEach((u) => URL.revokeObjectURL(u));
       heroAiThumbUrlsRef.current = [];
+      libraryThumbUrlsRef.current.forEach((u) => URL.revokeObjectURL(u));
+      libraryThumbUrlsRef.current = [];
     };
-  }, [refreshHeroAiHistory]);
+  }, [refreshHeroAiHistory, refreshStudioLibrary]);
 
   const applyHeroAiFromHistory = useCallback(async (entry: HeroAiHistoryEntry) => {
     try {
@@ -603,7 +673,7 @@ function App({ user, onSignOut }: AppProps) {
     return buildCopyVisualStrip(src, posterHeadlineLayout);
   }, [generated, studioVersion, v2Phase, previewContent, posterHeadlineLayout]);
 
-  const layoutStripVariations = useMemo(() => {
+  const designColorStripVariations = useMemo(() => {
     if (!generated) {
       return [];
     }
@@ -613,8 +683,69 @@ function App({ user, onSignOut }: AppProps) {
     const src = studioVersion === 'v2' && v2Phase === 'editing' ? previewContent : generated.content;
     const copy = buildCopyVisualStrip(src, posterHeadlineLayout);
     const base = copy[Math.min(ncCopyIdx, Math.max(0, copy.length - 1))]!;
-    return buildLayoutAccentStrip(base);
+    return buildDesignColorStrip(base);
   }, [generated, studioVersion, v2Phase, previewContent, ncCopyIdx, posterHeadlineLayout]);
+
+  const backgroundGradientStripVariations = useMemo(() => {
+    if (!generated) {
+      return [];
+    }
+    if (generated.format === 'carousel' && generated.carouselSlides?.length) {
+      return [];
+    }
+    const src = studioVersion === 'v2' && v2Phase === 'editing' ? previewContent : generated.content;
+    const copy = buildCopyVisualStrip(src, posterHeadlineLayout);
+    const copyBase = copy[Math.min(ncCopyIdx, Math.max(0, copy.length - 1))]!;
+    const design =
+      designColorStripVariations[Math.min(selected, Math.max(0, designColorStripVariations.length - 1))];
+    const mergeBase = design ? mergePosterVariation(copyBase, design, null, null) : copyBase;
+    return buildBackgroundGradientStrip(mergeBase);
+  }, [
+    generated,
+    studioVersion,
+    v2Phase,
+    previewContent,
+    ncCopyIdx,
+    posterHeadlineLayout,
+    designColorStripVariations,
+    selected,
+  ]);
+
+  const stylePatternStripVariations = useMemo(() => {
+    if (!generated) {
+      return [];
+    }
+    if (generated.format === 'carousel' && generated.carouselSlides?.length) {
+      return [];
+    }
+    const src = studioVersion === 'v2' && v2Phase === 'editing' ? previewContent : generated.content;
+    const copy = buildCopyVisualStrip(src, posterHeadlineLayout);
+    const copyBase = copy[Math.min(ncCopyIdx, Math.max(0, copy.length - 1))]!;
+    const design =
+      designColorStripVariations[Math.min(selected, Math.max(0, designColorStripVariations.length - 1))];
+    const gradient =
+      backgroundGradientStripVariations[
+        Math.min(selectedBackground, Math.max(0, backgroundGradientStripVariations.length - 1))
+      ];
+    if (!design) {
+      return buildStylePatternStrip(copyBase);
+    }
+    const mergeBase = gradient
+      ? mergePosterVariation(copyBase, design, gradient, null)
+      : mergePosterVariation(copyBase, design, null, null);
+    return buildStylePatternStrip(mergeBase);
+  }, [
+    generated,
+    studioVersion,
+    v2Phase,
+    previewContent,
+    ncCopyIdx,
+    posterHeadlineLayout,
+    designColorStripVariations,
+    backgroundGradientStripVariations,
+    selected,
+    selectedBackground,
+  ]);
 
   const variations = useMemo(() => {
     if (!generated) {
@@ -623,8 +754,8 @@ function App({ user, onSignOut }: AppProps) {
     if (generated.format === 'carousel' && generated.carouselSlides?.length) {
       return buildVariations(previewContent, posterHeadlineLayout);
     }
-    return layoutStripVariations;
-  }, [generated, previewContent, layoutStripVariations, posterHeadlineLayout]);
+    return designColorStripVariations;
+  }, [generated, previewContent, designColorStripVariations, posterHeadlineLayout]);
 
   useEffect(() => {
     setSelected((i) => (i < variations.length ? i : 0));
@@ -634,6 +765,14 @@ function App({ user, onSignOut }: AppProps) {
     setNcCopyIdx((i) => (i < copyStripVariations.length ? i : 0));
   }, [copyStripVariations.length]);
 
+  useEffect(() => {
+    setSelectedBackground((i) => (i < backgroundGradientStripVariations.length ? i : 0));
+  }, [backgroundGradientStripVariations.length]);
+
+  useEffect(() => {
+    setSelectedStyle((i) => (i < stylePatternStripVariations.length ? i : 0));
+  }, [stylePatternStripVariations.length]);
+
   const v = useMemo(() => {
     if (!variations.length) {
       return undefined;
@@ -642,17 +781,37 @@ function App({ user, onSignOut }: AppProps) {
       return variations[Math.min(selected, variations.length - 1)];
     }
     const copy = copyStripVariations[Math.min(ncCopyIdx, Math.max(0, copyStripVariations.length - 1))];
-    const layout = variations[Math.min(selected, Math.max(0, variations.length - 1))];
-    if (!copy || !layout) {
+    const design = variations[Math.min(selected, Math.max(0, variations.length - 1))];
+    const gradient =
+      backgroundGradientStripVariations[
+        Math.min(selectedBackground, Math.max(0, backgroundGradientStripVariations.length - 1))
+      ];
+    const style =
+      stylePatternStripVariations[
+        Math.min(selectedStyle, Math.max(0, stylePatternStripVariations.length - 1))
+      ];
+    if (!copy || !design) {
       const c0 = copyStripVariations[0];
-      const l0 = variations[0];
-      if (!c0 || !l0) {
+      const d0 = variations[0];
+      if (!c0 || !d0) {
         return undefined;
       }
-      return mergeCopyAndLayoutVariation(c0, l0);
+      const g0 = backgroundGradientStripVariations[0];
+      const s0 = stylePatternStripVariations[0];
+      return mergePosterVariation(c0, d0, g0, s0);
     }
-    return mergeCopyAndLayoutVariation(copy, layout);
-  }, [generated, variations, copyStripVariations, selected, ncCopyIdx]);
+    return mergePosterVariation(copy, design, gradient, style);
+  }, [
+    generated,
+    variations,
+    copyStripVariations,
+    backgroundGradientStripVariations,
+    stylePatternStripVariations,
+    selected,
+    ncCopyIdx,
+    selectedBackground,
+    selectedStyle,
+  ]);
 
   const lightboxPosterVariation = useMemo(() => {
     if (lightbox === null || !variations.length) {
@@ -667,9 +826,137 @@ function App({ user, onSignOut }: AppProps) {
     }
     const copyIdx = Math.min(Math.max(0, lightbox), nCopy - 1);
     const copy = copyStripVariations[copyIdx]!;
-    const layout = variations[Math.min(selected, Math.max(0, variations.length - 1))]!;
-    return mergeCopyAndLayoutVariation(copy, layout);
-  }, [lightbox, generated, variations, copyStripVariations, selected]);
+    const design = variations[Math.min(selected, Math.max(0, variations.length - 1))]!;
+    const gradient =
+      backgroundGradientStripVariations[
+        Math.min(selectedBackground, Math.max(0, backgroundGradientStripVariations.length - 1))
+      ];
+    const style =
+      stylePatternStripVariations[
+        Math.min(selectedStyle, Math.max(0, stylePatternStripVariations.length - 1))
+      ];
+    return mergePosterVariation(copy, design, gradient, style);
+  }, [
+    lightbox,
+    generated,
+    variations,
+    copyStripVariations,
+    backgroundGradientStripVariations,
+    stylePatternStripVariations,
+    selected,
+    selectedBackground,
+    selectedStyle,
+  ]);
+
+  const mergedPosterVariation = useCallback(
+    (
+      copyV: Variation,
+      designV: Variation,
+      bgIndex = selectedBackground,
+      styleIndex = selectedStyle
+    ) => {
+      const gradient =
+        backgroundGradientStripVariations[
+          Math.min(bgIndex, Math.max(0, backgroundGradientStripVariations.length - 1))
+        ];
+      const style =
+        stylePatternStripVariations[
+          Math.min(styleIndex, Math.max(0, stylePatternStripVariations.length - 1))
+        ];
+      return mergePosterVariation(copyV, designV, gradient, style);
+    },
+    [backgroundGradientStripVariations, stylePatternStripVariations, selectedBackground, selectedStyle]
+  );
+
+  const applyEditFromPosterVariation = useCallback(
+    (
+      copyIndex: number,
+      options?: {
+        layoutIndex?: number;
+        backgroundIndex?: number;
+        styleIndex?: number;
+        closeLightbox?: boolean;
+      }
+    ) => {
+      if (!generated) {
+        return;
+      }
+      setNcCopyIdx(copyIndex);
+      if (options?.layoutIndex != null) {
+        setSelected(options.layoutIndex);
+      }
+      if (options?.backgroundIndex != null) {
+        setSelectedBackground(options.backgroundIndex);
+      }
+      if (options?.styleIndex != null) {
+        setSelectedStyle(options.styleIndex);
+      }
+      const copy = copyStripVariations[copyIndex];
+      const design = variations[options?.layoutIndex ?? selected];
+      const gradient =
+        backgroundGradientStripVariations[
+          options?.backgroundIndex ?? selectedBackground
+        ];
+      const style =
+        stylePatternStripVariations[options?.styleIndex ?? selectedStyle];
+      if (!copy || !design) {
+        return;
+      }
+      const merged = mergePosterVariation(copy, design, gradient, style);
+      setDraft(draftSliceFromVariation(generated.content, merged));
+      setV2ShowCopyEditor(true);
+      if (options?.closeLightbox !== false) {
+        setLightbox(null);
+      }
+    },
+    [
+      generated,
+      copyStripVariations,
+      variations,
+      backgroundGradientStripVariations,
+      stylePatternStripVariations,
+      selected,
+      selectedBackground,
+      selectedStyle,
+    ]
+  );
+
+  const loadStudioLibraryEntry = useCallback((entry: StudioLibraryEntry) => {
+    setAppTab('generator');
+    const first = entry.carouselSlides?.[0] ?? entry.content;
+    setDraft({ ...first });
+    setFormat(entry.format);
+    setTheme(entry.theme);
+    setIncludeVisual(entry.includeVisual);
+    if (entry.carouselSlides?.length) {
+      setGenerated({
+        content: first,
+        format: 'carousel',
+        theme: entry.theme,
+        includeVisual: entry.includeVisual,
+        carouselSlides: entry.carouselSlides.map((s) => ({ ...s })),
+        carouselHeroUrls: entry.carouselSlides.map(() => null),
+      });
+      setCarouselSlideIndex(0);
+    } else {
+      setGenerated({
+        content: { ...entry.content },
+        format: entry.format,
+        theme: entry.theme,
+        includeVisual: entry.includeVisual,
+      });
+    }
+    setSelected(0);
+    setNcCopyIdx(0);
+    setSelectedBackground(0);
+    setSelectedStyle(0);
+    setV2Phase('editing');
+    setV2ShowCopyEditor(false);
+    setLightbox(null);
+    setHeroAiUrl(null);
+    setStaticHeroImageMap({});
+    setHeroShieldPreferred(true);
+  }, []);
 
   const { resolvedHeroImageUrl, resolvedHeroImageObjectFit, heroMatchPosterBackdrop } = useMemo(() => {
     const isCarouselDoc =
@@ -1071,13 +1358,18 @@ function App({ user, onSignOut }: AppProps) {
         setHeroAiError('No copy variation to brief the hero model.');
         return;
       }
-      const layouts = buildLayoutAccentStrip(base);
+      const layouts = buildDesignColorStrip(base);
       const layout0 = layouts[0];
       if (!layout0) {
         setHeroAiError('No layout variation to brief the hero model.');
         return;
       }
-      const merged = mergeCopyAndLayoutVariation(base, layout0);
+      const merged = mergePosterVariation(
+        base,
+        layout0,
+        buildBackgroundGradientStrip(layout0)[0] ?? null,
+        buildStylePatternStrip(layout0)[0] ?? null
+      );
       const headline = merged.headlineLines.filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
       const heroCopy: PosterContent = {
         ...generated.content,
@@ -1285,6 +1577,9 @@ function App({ user, onSignOut }: AppProps) {
     }
     setSelected(0);
     setNcCopyIdx(0);
+    setSelectedBackground(0);
+    setSelectedStyle(0);
+    queueLibrarySave();
     setLightbox(null);
     setHeroAiError(null);
     setV2Phase('editing');
@@ -1307,6 +1602,7 @@ function App({ user, onSignOut }: AppProps) {
     includeVisual,
     carouselSlideCount,
     heroUiTab,
+    queueLibrarySave,
   ]);
 
   const onPanelFooterPrimary = useCallback(() => {
@@ -1594,7 +1890,7 @@ function App({ user, onSignOut }: AppProps) {
       }
       return;
     }
-    if (copyStripVariations.length > 1) {
+    if (copyStripVariations.length > 0) {
       document
         .querySelector<HTMLElement>(`[data-lightbox-copy-thumb="${lightbox}"]`)
         ?.scrollIntoView({ inline: 'center', behavior: 'smooth', block: 'nearest' });
@@ -1746,6 +2042,43 @@ function App({ user, onSignOut }: AppProps) {
   const posterTheme = g?.theme ?? 'dark';
   const exportReady = Boolean(g && v);
 
+  useEffect(() => {
+    const token = pendingLibrarySaveRef.current;
+    if (!token || !generated || isBooting || !exportRef.current || !v) {
+      return undefined;
+    }
+    const t = window.setTimeout(() => {
+      if (pendingLibrarySaveRef.current !== token) {
+        return;
+      }
+      void (async () => {
+        const el = exportRef.current;
+        const bundle = generatedRef.current;
+        if (!el || !bundle || !v) {
+          return;
+        }
+        try {
+          const dataUrl = await toPng(el, { pixelRatio: 0.65, cacheBust: true });
+          const res = await fetch(dataUrl);
+          const thumbBlob = await res.blob();
+          await saveStudioLibraryEntry({
+            content: bundle.content,
+            format: bundle.format,
+            theme: bundle.theme,
+            includeVisual: bundle.includeVisual,
+            carouselSlides: bundle.carouselSlides,
+            thumbBlob,
+          });
+          pendingLibrarySaveRef.current = null;
+          await refreshStudioLibrary();
+        } catch {
+          /* library save optional */
+        }
+      })();
+    }, 900);
+    return () => clearTimeout(t);
+  }, [generated, isBooting, v, refreshStudioLibrary]);
+
   return (
     <>
       <div className="app-view">
@@ -1767,13 +2100,36 @@ function App({ user, onSignOut }: AppProps) {
             <p className="app-header__tagline">ACKO for Business</p>
           </div>
         </div>
+        <nav className="app-header__tabs" role="tablist" aria-label="Ultron sections">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={appTab === 'generator'}
+            className={`app-header__tab${appTab === 'generator' ? ' is-active' : ''}`}
+            onClick={() => setAppTab('generator')}
+          >
+            Generator
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={appTab === 'library'}
+            className={`app-header__tab${appTab === 'library' ? ' is-active' : ''}`}
+            onClick={() => {
+              setAppTab('library');
+              void refreshStudioLibrary();
+            }}
+          >
+            Library
+          </button>
+        </nav>
         <div className="app-header__actions">
           <div className="app-header__tools" role="group" aria-label="Workspace shortcuts">
             <button
               type="button"
               className="btn btn-cyber-ghost btn--header-tool"
               onClick={fillDemoCopy}
-              disabled={isBooting || (studioVersion === 'v2' && v2FromPromptLoading)}
+              disabled={isBooting || (studioVersion === 'v2' && v2FromPromptLoading) || appTab === 'library'}
             >
               Prefill data
             </button>
@@ -1781,7 +2137,7 @@ function App({ user, onSignOut }: AppProps) {
               type="button"
               className="btn btn-cyber-ghost btn--header-tool"
               onClick={clearAll}
-              disabled={isBooting}
+              disabled={isBooting || appTab === 'library'}
               aria-label="Clear copy and generated creatives"
             >
               Clear
@@ -1793,6 +2149,7 @@ function App({ user, onSignOut }: AppProps) {
               type="button"
               className={`studio-version-toggle__btn${studioVersion === 'v1' ? ' is-active' : ''}`}
               aria-pressed={studioVersion === 'v1'}
+              disabled={appTab === 'library'}
               onClick={() => {
                 setStudioVersion('v1');
                 setFormat((f) => (f === 'carousel' ? 'landscape' : f));
@@ -1807,6 +2164,7 @@ function App({ user, onSignOut }: AppProps) {
               type="button"
               className={`studio-version-toggle__btn${studioVersion === 'v2' ? ' is-active' : ''}`}
               aria-pressed={studioVersion === 'v2'}
+              disabled={appTab === 'library'}
               onClick={() => {
                 setStudioVersion('v2');
                 setV2Phase('prompt');
@@ -1887,12 +2245,84 @@ function App({ user, onSignOut }: AppProps) {
         </div>
       </header>
 
+      {appTab === 'library' ? (
+        <main className="studio-library" aria-label="Previously generated visuals">
+          <header className="studio-library__head">
+            <div>
+              <h1 className="studio-library__title">Library</h1>
+              <p className="studio-library__desc">Previously generated creatives saved in this browser.</p>
+            </div>
+            {libraryRows.length > 0 ? (
+              <button
+                type="button"
+                className="btn btn-cyber-ghost btn--header-tool"
+                onClick={() => {
+                  void (async () => {
+                    try {
+                      await clearStudioLibrary();
+                    } catch {
+                      /* ignore */
+                    }
+                    await refreshStudioLibrary();
+                  })();
+                }}
+              >
+                Clear library
+              </button>
+            ) : null}
+          </header>
+          {libraryRows.length === 0 ? (
+            <div className="studio-library__empty" role="status">
+              <p>No saved visuals yet. Generate a poster in the Generator tab — it will appear here automatically.</p>
+            </div>
+          ) : (
+            <div className="studio-library__grid" role="list">
+              {libraryRows.map(({ entry, thumbUrl }) => (
+                <article key={entry.id} className="studio-library__card" role="listitem">
+                  <button
+                    type="button"
+                    className="studio-library__card-hit"
+                    onClick={() => loadStudioLibraryEntry(entry)}
+                    title={entry.headlinePreview}
+                  >
+                    <img src={thumbUrl} alt="" decoding="async" className="studio-library__thumb" />
+                    <span className="studio-library__meta">
+                      <span className="studio-library__headline">{entry.headlinePreview}</span>
+                      <span className="studio-library__sub">
+                        {LINKEDIN_FORMATS[entry.format].label} · {entry.theme} ·{' '}
+                        {new Date(entry.createdAt).toLocaleString()}
+                      </span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="studio-library__delete"
+                    aria-label="Remove from library"
+                    onClick={() => {
+                      void (async () => {
+                        try {
+                          await deleteStudioLibraryEntry(entry.id);
+                        } catch {
+                          /* ignore */
+                        }
+                        await refreshStudioLibrary();
+                      })();
+                    }}
+                  >
+                    ×
+                  </button>
+                </article>
+              ))}
+            </div>
+          )}
+        </main>
+      ) : (
       <div className="studio">
         <aside className="panel" aria-label="Ultron creative inputs">
         <div className="panel-body">
-          <section className="panel-section panel-section--output" aria-labelledby="section-style">
-            <h2 id="section-style" className="panel-group__title">
-              Style
+          <section className="panel-section panel-section--output" aria-labelledby="section-format">
+            <h2 id="section-format" className="panel-group__title">
+              Format
             </h2>
             <div className="field field--spaced field--compact">
               <span className="field-label">Format</span>
@@ -2519,19 +2949,11 @@ function App({ user, onSignOut }: AppProps) {
                         const heroUrl = heroUrlForExportSlide(idx);
                         const slideHeroBusy = Boolean(g.includeVisual && carouselHeroBusy && !heroUrl);
                         return (
-                          <button
+                          <div
                             key={`ws-car-${idx}`}
-                            type="button"
                             role="tab"
                             aria-selected={carouselSlideIndex === idx}
                             className={`workspace-carousel-story__panel${carouselSlideIndex === idx ? ' is-active' : ''}`}
-                            onClick={() => {
-                              if (idx !== carouselSlideIndex) {
-                                goCarouselSlide(idx);
-                              }
-                              setLightbox(selected);
-                            }}
-                            aria-label={`Slide ${idx + 1} of ${g.carouselSlides!.length}: ${slideContent.headline.slice(0, 80)}`}
                           >
                             <span className="workspace-carousel-story__badge" aria-hidden>
                               {idx + 1} / {g.carouselSlides!.length}
@@ -2544,23 +2966,50 @@ function App({ user, onSignOut }: AppProps) {
                               {workspaceCopyGenerating ? (
                                 <div className="variation-card__thumb-shimmer" aria-hidden />
                               ) : null}
-                              <ScaledPreview format="carousel" maxWidth={228} posterTheme={g.theme}>
-                                <PosterCard
-                                  format="carousel"
-                                  theme={g.theme}
-                                  content={slideContent}
-                                  variation={vv}
-                                  includeVisual={g.includeVisual}
-                                  heroImageUrl={heroUrl}
-                                  heroImageLoading={slideHeroBusy}
-                                  heroImageObjectFit={resolvedHeroImageObjectFit}
-                                  heroMatchPosterBackdrop={heroMatchPosterBackdrop}
-                                  slidePager={{ current: idx + 1, total: g.carouselSlides!.length }}
-                                />
-                              </ScaledPreview>
-                              <ThumbViewCta />
+                              <button
+                                type="button"
+                                className="workspace-carousel-story__frame-hit"
+                                onClick={() => {
+                                  if (idx !== carouselSlideIndex) {
+                                    goCarouselSlide(idx);
+                                  }
+                                  setLightbox(selected);
+                                }}
+                                aria-label={`Slide ${idx + 1} of ${g.carouselSlides!.length}: ${slideContent.headline.slice(0, 80)}`}
+                              >
+                                <ScaledPreview format="carousel" maxWidth={228} posterTheme={g.theme}>
+                                  <PosterCard
+                                    format="carousel"
+                                    theme={g.theme}
+                                    content={slideContent}
+                                    variation={vv}
+                                    includeVisual={g.includeVisual}
+                                    heroImageUrl={heroUrl}
+                                    heroImageLoading={slideHeroBusy}
+                                    heroImageObjectFit={resolvedHeroImageObjectFit}
+                                    heroMatchPosterBackdrop={heroMatchPosterBackdrop}
+                                    slidePager={{ current: idx + 1, total: g.carouselSlides!.length }}
+                                  />
+                                </ScaledPreview>
+                              </button>
+                              <ThumbHoverActions
+                                onView={(e) => {
+                                  e.stopPropagation();
+                                  if (idx !== carouselSlideIndex) {
+                                    goCarouselSlide(idx);
+                                  }
+                                  setLightbox(selected);
+                                }}
+                                onEdit={(e) => {
+                                  e.stopPropagation();
+                                  if (idx !== carouselSlideIndex) {
+                                    goCarouselSlide(idx);
+                                  }
+                                  setV2ShowCopyEditor(true);
+                                }}
+                              />
                             </div>
-                          </button>
+                          </div>
                         );
                       })}
                     </div>
@@ -2681,10 +3130,11 @@ function App({ user, onSignOut }: AppProps) {
                   </div>
                 ) : (
                   <div className="workspace-static-doc-shell">
-                    <h2 id="workspace-poster-options-title" className="section-title">
-                      Poster options
-                    </h2>
-                    <div className="workspace-poster-options-band">
+                    <div className="workspace-static-section">
+                      <h2 id="workspace-poster-options-title" className="section-title">
+                        Poster options
+                      </h2>
+                      <div className="workspace-poster-options-band">
                       <div
                         ref={posterOptionsGridRef}
                         className="workspace-poster-options-grid"
@@ -2696,7 +3146,7 @@ function App({ user, onSignOut }: AppProps) {
                           const layoutSel =
                             variations[Math.min(selected, Math.max(0, variations.length - 1))];
                           const posterOptV =
-                            layoutSel && copyV ? mergeCopyAndLayoutVariation(copyV, layoutSel) : copyV;
+                            layoutSel && copyV ? mergedPosterVariation(copyV, layoutSel) : copyV;
                           const fmt = LINKEDIN_FORMATS[posterFormat];
                           return (
                             <div
@@ -2714,49 +3164,63 @@ function App({ user, onSignOut }: AppProps) {
                                   aria-hidden
                                 />
                               ) : null}
-                              <button
-                                type="button"
-                                className="workspace-poster-options-hit"
-                                onClick={() => {
-                                  setNcCopyIdx(index);
-                                  setLightbox(index);
-                                }}
-                                aria-label={`View poster option ${copyV.creativeName ?? `option ${index + 1}`}`}
-                              >
-                                <ScaledPreview
-                                  format={posterFormat}
-                                  className="preview-expand__inner workspace-poster-options-preview"
-                                  posterTheme={posterTheme}
-                                  maxWidth={720}
+                              <div className="preview-thumb-wrap preview-thumb-wrap--poster-option">
+                                <button
+                                  type="button"
+                                  className="workspace-poster-options-hit"
+                                  onClick={() => {
+                                    setNcCopyIdx(index);
+                                    setLightbox(index);
+                                  }}
+                                  aria-label={`View poster option ${copyV.creativeName ?? `option ${index + 1}`}`}
                                 >
-                                <PosterCard
-                                  format={posterFormat}
-                                  theme={posterTheme}
-                                  content={previewContent}
-                                  variation={posterOptV}
-                                  includeVisual={g.includeVisual}
-                                  heroImageUrl={staticAiHeroUrlForMerged(posterOptV, index)}
-                                  heroImageLoading={thumbHeroLoading(index, posterOptV)}
-                                    heroImageObjectFit={resolvedHeroImageObjectFit}
-                                    heroMatchPosterBackdrop={heroMatchPosterBackdrop}
-                                    slidePager={carouselSlidePager}
-                                  />
-                                </ScaledPreview>
-                                <ThumbViewCta />
-                              </button>
+                                  <ScaledPreview
+                                    format={posterFormat}
+                                    className="preview-expand__inner workspace-poster-options-preview"
+                                    posterTheme={posterTheme}
+                                    maxWidth={960}
+                                  >
+                                    <PosterCard
+                                      format={posterFormat}
+                                      theme={posterTheme}
+                                      content={previewContent}
+                                      variation={posterOptV}
+                                      includeVisual={g.includeVisual}
+                                      heroImageUrl={staticAiHeroUrlForMerged(posterOptV, index)}
+                                      heroImageLoading={thumbHeroLoading(index, posterOptV)}
+                                      heroImageObjectFit={resolvedHeroImageObjectFit}
+                                      heroMatchPosterBackdrop={heroMatchPosterBackdrop}
+                                      slidePager={carouselSlidePager}
+                                    />
+                                  </ScaledPreview>
+                                </button>
+                                <ThumbHoverActions
+                                  onView={(e) => {
+                                    e.stopPropagation();
+                                    setNcCopyIdx(index);
+                                    setLightbox(index);
+                                  }}
+                                  onEdit={(e) => {
+                                    e.stopPropagation();
+                                    applyEditFromPosterVariation(index);
+                                  }}
+                                />
+                              </div>
                             </div>
                           );
                         })}
                       </div>
+                      </div>
                     </div>
 
-                    <h2
-                      id="workspace-options-title"
-                      className="section-title section-title--after-carousel workspace-static-layout-heading"
-                    >
-                      Design options
-                    </h2>
-                    <div className="workspace-carousel-layout-shell workspace-static-layout-shell">
+                    <div className="workspace-static-section">
+                      <h2
+                        id="workspace-options-title"
+                        className="section-title section-title--after-carousel workspace-static-layout-heading"
+                      >
+                        Design options
+                      </h2>
+                      <div className="workspace-carousel-layout-shell workspace-static-layout-shell">
                       <div
                         ref={variationGridRef}
                         className="variation-grid variation-grid--carousel-compact"
@@ -2770,7 +3234,7 @@ function App({ user, onSignOut }: AppProps) {
                               Math.min(ncCopyIdx, Math.max(0, copyStripVariations.length - 1))
                             ];
                           const stripVariation =
-                            copyV && layoutVar ? mergeCopyAndLayoutVariation(copyV, layoutVar) : layoutVar;
+                            copyV && layoutVar ? mergedPosterVariation(copyV, layoutVar) : layoutVar;
                           return (
                           <div
                             key={layoutVar.id}
@@ -2819,6 +3283,61 @@ function App({ user, onSignOut }: AppProps) {
                         );
                         })}
                       </div>
+                      </div>
+                    </div>
+
+                    <div className="workspace-static-section workspace-canvas-section">
+                      <h2
+                        id="workspace-background-title"
+                        className="section-title section-title--after-carousel workspace-static-layout-heading"
+                      >
+                        Color variations
+                      </h2>
+                      <p className="workspace-canvas-section__hint">
+                        {posterTheme === 'dark'
+                          ? 'Dark palettes — pick one and it applies to every creative above.'
+                          : 'Light palettes — pick one and it applies to every creative above.'}
+                      </p>
+                      <WorkspaceCanvasSwatchStrip ariaLabel="Color variations — use arrow keys when focused">
+                        {BACKGROUND_PALETTE_LABELS.map((label, index) => (
+                          <WorkspaceCanvasSwatch
+                            key={`palette-${index}`}
+                            label={label}
+                            selected={selectedBackground === index}
+                            swatchStyle={canvasSwatchBackground(posterTheme, index)}
+                            onClick={() => setSelectedBackground(index)}
+                            ariaLabel={`Select ${label} palette`}
+                          />
+                        ))}
+                      </WorkspaceCanvasSwatchStrip>
+                    </div>
+
+                    <div className="workspace-static-section workspace-canvas-section">
+                      <h2
+                        id="workspace-style-title"
+                        className="section-title section-title--after-carousel workspace-static-layout-heading"
+                      >
+                        Background style
+                      </h2>
+                      <p className="workspace-canvas-section__hint">
+                        Add a gradient or pattern — it applies to every creative above.
+                      </p>
+                      <WorkspaceCanvasSwatchStrip ariaLabel="Background style — use arrow keys when focused">
+                        {STYLE_PATTERN_LABELS.map((label, index) => (
+                          <WorkspaceCanvasSwatch
+                            key={`style-${index}`}
+                            label={label}
+                            selected={selectedStyle === index}
+                            swatchStyle={canvasSwatchBackground(
+                              posterTheme,
+                              selectedBackground,
+                              index
+                            )}
+                            onClick={() => setSelectedStyle(index)}
+                            ariaLabel={`Select ${label} background style`}
+                          />
+                        ))}
+                      </WorkspaceCanvasSwatchStrip>
                     </div>
                   </div>
                 )
@@ -2890,7 +3409,7 @@ function App({ user, onSignOut }: AppProps) {
         </div>
       </main>
       </div>
-      </div>
+      )}
 
       {g && lightbox !== null && lightboxPosterVariation ? (
         <div
@@ -2984,14 +3503,23 @@ function App({ user, onSignOut }: AppProps) {
                     ) : null}
                   </div>
                 ) : (
-                  <button
-                    type="button"
-                    className="lightbox-download"
-                    onClick={onDownloadLightbox}
-                    disabled={downloading || !g}
-                  >
-                    {downloading ? 'Exporting…' : 'Download PNG'}
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className="btn-tiny lightbox-header__edit"
+                      onClick={() => applyEditFromPosterVariation(lightbox ?? 0)}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      className="lightbox-download"
+                      onClick={onDownloadLightbox}
+                      disabled={downloading || !g}
+                    >
+                      {downloading ? 'Exporting…' : 'Download PNG'}
+                    </button>
+                  </>
                 )}
                 <button
                   type="button"
@@ -3221,15 +3749,13 @@ function App({ user, onSignOut }: AppProps) {
                     <span className="lightbox-nav-placeholder" aria-hidden />
                   )}
                 </div>
-                {copyStripVariations.length > 1 ? (
-                  <div className="lightbox-thumbs" role="listbox" aria-label="Poster copy options">
+                {copyStripVariations.length > 0 ? (
+                  <div className="lightbox-thumbs" role="listbox" aria-label="All poster options">
                     {copyStripVariations.map((copyV, index) => {
                       const layoutSel =
                         variations[Math.min(selected, Math.max(0, variations.length - 1))];
                       const thumbPosterVariation =
-                        layoutSel && copyV
-                          ? mergeCopyAndLayoutVariation(copyV, layoutSel)
-                          : copyV;
+                        layoutSel && copyV ? mergedPosterVariation(copyV, layoutSel) : copyV;
                       return (
                         <button
                           key={copyV.id}
@@ -3277,13 +3803,13 @@ function App({ user, onSignOut }: AppProps) {
                     {lightbox + 1} <span className="lightbox-meta__of">/</span> {variations.length}
                   </p>
                 ) : null
-              ) : copyStripVariations.length > 1 ? (
+              ) : copyStripVariations.length > 0 ? (
                 <p className="lightbox-meta" aria-live="polite">
-                  {lightbox + 1} <span className="lightbox-meta__of">/</span> {copyStripVariations.length}
+                  {(lightbox ?? 0) + 1} <span className="lightbox-meta__of">/</span> {copyStripVariations.length}
                 </p>
               ) : null}
               <p className="lightbox-label">
-                {lightboxPosterVariation.creativeName ?? `Option ${lightbox + 1}`}
+                {lightboxPosterVariation.creativeName ?? `Option ${(lightbox ?? 0) + 1}`}
                 <span className="lightbox-label__detail"> — {lightboxPosterVariation.label}</span>
               </p>
             </div>
@@ -3326,6 +3852,7 @@ function App({ user, onSignOut }: AppProps) {
             slidePager={carouselSlidePager}
           />
         ) : null}
+      </div>
       </div>
     </>
   );

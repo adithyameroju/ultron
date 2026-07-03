@@ -1,4 +1,8 @@
 import { fitHeadlineLinesConservative, fitHeadlineLinesForPoster, type PosterHeadlineLayout } from './headlineLineFit';
+import {
+  BACKGROUND_PALETTE_LABELS,
+  STYLE_PATTERN_LABELS as STYLE_PATTERN_LABELS_CANON,
+} from './posterBackgroundLayers';
 import type { AccentId, HeadlineTreatment, PosterContent, PosterCopyRoute, Variation } from './posterTypes';
 import { ACCENTS } from './posterTypes';
 
@@ -15,7 +19,6 @@ function wordsOf(headline: string): string[] {
   return headline.trim().split(/\s+/).filter(Boolean);
 }
 
-/** Two lines: first chunk uses ~`ratio` of the words. */
 function splitTwoLines(words: string[], ratio: number): string[] {
   if (words.length === 0) {
     return ['Your headline'];
@@ -27,7 +30,6 @@ function splitTwoLines(words: string[], ratio: number): string[] {
   return [words.slice(0, k).join(' '), words.slice(k).join(' ')];
 }
 
-/** Up to three balanced lines (by word count). */
 function splitThreeLines(words: string[]): string[] {
   if (words.length === 0) {
     return ['Your headline'];
@@ -78,9 +80,7 @@ function variationCopy(
     'accentLastWordFirstLine',
     'underlineSecondLine',
   ];
-  /** Only the brief/model overline; no fabricated “tag” lines per card. */
   const displayOv = baseOv;
-  /** Distinct subhead phrasing per poster option (length controlled at generation time). */
   const subheads = [
     sub,
     sub ? `One thread: ${first}` : sub,
@@ -102,10 +102,7 @@ export function buildVariations(content: PosterContent, layout?: PosterHeadlineL
     label: string;
     headlineAllCaps?: boolean;
   }> = [
-    {
-      lines: balanced2,
-      label: '2 lines · balanced',
-    },
+    { lines: balanced2, label: '2 lines · balanced' },
     {
       lines: fitLines(capLines(splitTwoLines(words, 0.38), MAX_HEADLINE_LINES), layout),
       label: '2 lines · short / long',
@@ -120,7 +117,6 @@ export function buildVariations(content: PosterContent, layout?: PosterHeadlineL
     },
   ];
 
-  /** One distinct ACKO accent per variation (no repeats in the default set of four). */
   const accentOrder: AccentId[] = ['purple', 'cerise', 'picton', 'violet'];
   const creativeNames = ['Bold', 'Minimal', 'Visual-heavy', 'Statement'] as const;
   return modes.map((m, i) => {
@@ -131,7 +127,8 @@ export function buildVariations(content: PosterContent, layout?: PosterHeadlineL
       label: `${ACCENTS[accent].label} · ${m.label}`,
       creativeName: creativeNames[i] ?? creativeNames[0],
       accent,
-      backgroundStyleId: i % 8,
+      backgroundGradientId: 0,
+      stylePatternId: 0,
       headlineLines: m.lines,
       headlineAllCaps: m.headlineAllCaps,
       displayOverline: copy.displayOverline,
@@ -141,13 +138,8 @@ export function buildVariations(content: PosterContent, layout?: PosterHeadlineL
   });
 }
 
-/** First workspace strip (non-carousel): emphasise copy / headline routes; unified accent + background. */
 const STRIP_ACCENT: AccentId = 'purple';
 
-/**
- * Four headline + subhead pairs for the poster-options row: prefers model `copyRoutes`, else pads partial
- * routes, else derives visibly different strings from the primary headline and subhead.
- */
 export function expandToFourCopyRoutes(content: PosterContent): PosterCopyRoute[] {
   const norm = (r: PosterCopyRoute): PosterCopyRoute => ({
     headline: r.headline.replace(/\s+/g, ' ').trim(),
@@ -192,6 +184,7 @@ export function expandToFourCopyRoutes(content: PosterContent): PosterCopyRoute[
   }));
 }
 
+/** Poster options row — copy / headline routes only. */
 export function buildCopyVisualStrip(content: PosterContent, layout?: PosterHeadlineLayout): Variation[] {
   const routes = expandToFourCopyRoutes(content);
   return routes.map((route, i) => {
@@ -205,47 +198,95 @@ export function buildCopyVisualStrip(content: PosterContent, layout?: PosterHead
     return {
       ...v,
       accent: STRIP_ACCENT,
-      backgroundStyleId: 0,
+      backgroundGradientId: 0,
+      stylePatternId: 0,
       id: `copy-strip-${i}-${v.id}`,
     };
   });
 }
 
-/** Second strip: same copy as `base`, four accent + canvas recipes with four distinct AI hero paths (non-carousel only). */
-export function buildLayoutAccentStrip(base: Variation): Variation[] {
-  const accentOrder: AccentId[] = ['purple', 'cerise', 'picton', 'violet'];
-  const heroStyles: Array<'default' | 'defaultAlt' | 'stylizedIllustration' | 'photorealHuman'> = [
-    'default',
-    'defaultAlt',
-    'stylizedIllustration',
-    'photorealHuman',
+export const BACKGROUND_GRADIENT_LABELS = BACKGROUND_PALETTE_LABELS;
+export const STYLE_PATTERN_LABELS = STYLE_PATTERN_LABELS_CANON;
+
+/** Design options — text / accent colour only (no hero or background change). */
+export function buildDesignColorStrip(base: Variation): Variation[] {
+  const accents: Array<{ accent: AccentId; name: string }> = [
+    { accent: 'purple', name: 'Crocus' },
+    { accent: 'cerise', name: 'Cerise' },
+    { accent: 'picton', name: 'Picton' },
+    { accent: 'violet', name: 'Violet' },
+    { accent: 'deepPurple', name: 'Deep' },
+    { accent: 'inkPurple', name: 'Ink' },
   ];
-  return accentOrder.map((accent, i) => ({
+  return accents.map((spec, i) => ({
     ...base,
-    accent,
-    backgroundStyleId: i % 8,
-    heroVisualStyle: heroStyles[i],
-    id: `layout-strip-${i}-${accent}-${heroStyles[i]}`,
-    label:
-      heroStyles[i] === 'photorealHuman'
-        ? `${ACCENTS[accent].label} · photoreal hero`
-        : heroStyles[i] === 'stylizedIllustration'
-          ? `${ACCENTS[accent].label} · illustration hero`
-          : heroStyles[i] === 'defaultAlt'
-            ? `${ACCENTS[accent].label} · alt abstract hero`
-            : `${ACCENTS[accent].label} · canvas ${(i % 8) + 1}`,
-    creativeName: ACCENTS[accent].label.split(' ')[0] ?? ACCENTS[accent].label,
+    accent: spec.accent,
+    heroVisualStyle: base.heroVisualStyle ?? 'default',
+    backgroundGradientId: base.backgroundGradientId ?? 0,
+    stylePatternId: base.stylePatternId ?? 0,
+    id: `design-color-${i}-${spec.accent}`,
+    label: ACCENTS[spec.accent].label,
+    creativeName: spec.name,
   }));
 }
 
-/** Single poster variation for export / preview: copy route × layout accent. */
-export function mergeCopyAndLayoutVariation(copyV: Variation, layoutV: Variation): Variation {
+/** Background strip — base gradient canvas only. */
+export function buildBackgroundGradientStrip(base: Variation): Variation[] {
+  return BACKGROUND_GRADIENT_LABELS.map((label, i) => ({
+    ...base,
+    backgroundGradientId: i,
+    id: `bg-gradient-${i}`,
+    label,
+    creativeName: label,
+  }));
+}
+
+/** Style strip — light abstract / curvy pattern overlays. */
+export function buildStylePatternStrip(base: Variation): Variation[] {
+  return STYLE_PATTERN_LABELS.map((label, i) => ({
+    ...base,
+    stylePatternId: i,
+    id: `style-pattern-${i}`,
+    label,
+    creativeName: label,
+  }));
+}
+
+/** @deprecated Use `buildDesignColorStrip`. */
+export const buildLayoutAccentStrip = buildDesignColorStrip;
+
+/** @deprecated Use `buildBackgroundGradientStrip`. */
+export const buildBackgroundStrip = buildBackgroundGradientStrip;
+
+/** @deprecated */
+export const BACKGROUND_PATTERN_LABELS = BACKGROUND_GRADIENT_LABELS;
+
+/** Merge copy × design colour × background gradient × style pattern. */
+export function mergePosterVariation(
+  copyV: Variation,
+  designV: Variation,
+  gradientV?: Variation | null,
+  styleV?: Variation | null
+): Variation {
+  const gradientId =
+    gradientV?.backgroundGradientId ??
+    designV.backgroundGradientId ??
+    copyV.backgroundGradientId ??
+    0;
+  const patternId =
+    styleV?.stylePatternId ?? designV.stylePatternId ?? copyV.stylePatternId ?? 0;
   return {
     ...copyV,
-    accent: layoutV.accent,
-    backgroundStyleId: layoutV.backgroundStyleId,
-    heroVisualStyle: layoutV.heroVisualStyle ?? 'default',
-    id: `${copyV.id}__${layoutV.id}`,
-    label: `${copyV.creativeName ?? 'Creative'} · ${ACCENTS[layoutV.accent].label}`,
+    accent: designV.accent,
+    backgroundGradientId: gradientId,
+    stylePatternId: patternId,
+    backgroundStyleId: gradientId,
+    heroVisualStyle: designV.heroVisualStyle ?? copyV.heroVisualStyle ?? 'default',
+    id: `${copyV.id}__${designV.id}__g${gradientId}__s${patternId}`,
+    label: `${copyV.creativeName ?? 'Creative'} · ${ACCENTS[designV.accent].label}`,
   };
+}
+
+export function mergeCopyAndLayoutVariation(copyV: Variation, layoutV: Variation): Variation {
+  return mergePosterVariation(copyV, layoutV, null, null);
 }
